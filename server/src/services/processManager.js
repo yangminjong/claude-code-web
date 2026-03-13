@@ -16,7 +16,7 @@ export function sendMessage(webSessionId, message, cwd, claudeSessionId) {
     throw err;
   }
 
-  const args = ['-p', message, '--output-format', 'stream-json'];
+  const args = ['-p', message, '--output-format', 'stream-json', '--verbose'];
   if (claudeSessionId) {
     args.push('--resume', claudeSessionId);
   }

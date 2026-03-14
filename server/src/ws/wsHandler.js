@@ -1,9 +1,10 @@
 import {
-  sendMessage, getClaudeSessionId, setClaudeSessionId,
+  sendMessage, sendMessageSSH, getClaudeSessionId, setClaudeSessionId,
   isProcessBusy, cancelProcess
 } from '../services/processManager.js';
 import { addMessage, getSession } from '../services/sessionManager.js';
 import { auditLog } from '../services/auditLogger.js';
+import { getProfileWithCredential, updateLastConnected } from '../services/sshProfileManager.js';
 
 /**
  * Extract displayable text from a stream-json line object.
@@ -121,7 +122,24 @@ function handleUserMessage(ws, sessionId, session, content) {
 
   let proc;
   try {
-    proc = sendMessage(sessionId, content, session.project_path, claudeSessionId);
+    if (session.work_mode === 'ssh') {
+      const profile = getProfileWithCredential(session.ssh_profile_id, session.user_id);
+      if (!profile) {
+        ws.send(JSON.stringify({ type: 'error', message: 'SSH 프로필을 찾을 수 없습니다' }));
+        return;
+      }
+      proc = sendMessageSSH(sessionId, content, session.project_path, claudeSessionId, {
+        host: profile.host,
+        port: profile.port,
+        username: profile.username,
+        authMethod: profile.auth_method,
+        credential: profile.credential
+      });
+      updateLastConnected(profile.id);
+      auditLog(session.user_id, 'ssh_connect', { profileId: profile.id, host: profile.host });
+    } else {
+      proc = sendMessage(sessionId, content, session.project_path, claudeSessionId);
+    }
   } catch (err) {
     ws.send(JSON.stringify({ type: 'error', message: err.message }));
     return;

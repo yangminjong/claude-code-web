@@ -4,6 +4,35 @@
 
 ## 2026-03-14
 
+### 3. [2차] SSH 모드 구현
+
+원격 서버에 SSH로 접속하여 Claude Code를 실행할 수 있는 모드 추가.
+
+**DB 변경:**
+- `ssh_profiles` 테이블 추가 (호스트, 포트, 사용자명, 암호화된 인증 정보, 허용 경로)
+- `sessions` 테이블에 `ssh_profile_id` 컬럼 추가 (마이그레이션)
+
+**백엔드:**
+- `server/src/utils/crypto.js` — AES-256-GCM 기반 SSH 자격 증명 암호화/복호화
+- `server/src/services/sshProfileManager.js` — SSH 프로필 CRUD, 경로 검증, 자격 증명 관리
+- `server/src/routes/sshProfiles.js` — SSH 프로필 REST API + 연결 테스트 엔드포인트
+- `server/src/services/processManager.js` — `SSHProcessWrapper` 클래스, `sendMessageSSH()` 함수 추가
+- `server/src/ws/wsHandler.js` — `work_mode === 'ssh'`일 때 SSH 경로로 분기
+- `server/src/services/sessionManager.js` — SSH 모드 세션 생성 시 프로필 검증, 원격 경로 검증
+- `server/src/services/auditLogger.js` — SSH 관련 감사 로그 액션 추가
+- 의존성: `ssh2` 패키지 추가
+
+**프론트엔드:**
+- `client/src/stores/sshProfileStore.js` — SSH 프로필 Zustand 스토어
+- `client/src/components/Settings/SshProfileForm.jsx` — SSH 프로필 생성/수정 폼 (연결 테스트 포함)
+- `client/src/components/Settings/SettingsPage.jsx` — SSH 프로필 관리 섹션 추가
+- `client/src/components/Session/NewSessionModal.jsx` — 로컬/SSH 모드 토글, SSH 프로필 선택
+- `client/src/components/Session/SessionItem.jsx` — SSH 세션 배지 표시
+- `client/src/stores/sessionStore.js` — `sshProfileId` 파라미터 지원
+- `client/src/api/client.js` — SSH 프로필 API 메서드 추가
+
+---
+
 ### 1. [버그 수정] Claude CLI `-p` 모드에서 대화형 모드로 fallback되는 문제
 
 **파일:** `server/src/services/processManager.js`

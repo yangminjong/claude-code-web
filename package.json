@@ -2,5 +2,11 @@
   "name": "claude-code-web",
   "version": "1.0.0",
   "private": true,
-  "workspaces": ["server", "client"]
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  }
 }

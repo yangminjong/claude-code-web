@@ -22,6 +22,12 @@ export function getDb() {
   const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf-8');
   db.exec(schema);
 
+  // Migrations
+  const columns = db.pragma('table_info(sessions)').map(c => c.name);
+  if (!columns.includes('ssh_profile_id')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN ssh_profile_id INTEGER REFERENCES ssh_profiles(id)');
+  }
+
   return db;
 }
 

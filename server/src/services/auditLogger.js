@@ -3,7 +3,9 @@ import { getDb } from '../db/connection.js';
 const VALID_ACTIONS = [
   'login', 'login_fail', 'logout', 'token_expire',
   'session_create', 'session_end', 'session_error',
-  'file_upload', 'file_download', 'ws_disconnect'
+  'file_upload', 'file_download', 'ws_disconnect',
+  'ssh_profile_create', 'ssh_profile_update', 'ssh_profile_delete',
+  'ssh_connect', 'ssh_connect_fail', 'ssh_disconnect'
 ];
 
 export function auditLog(userId, action, detail = {}, ipAddress = null) {

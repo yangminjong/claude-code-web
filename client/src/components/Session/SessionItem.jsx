@@ -29,7 +29,10 @@ export default function SessionItem({ session, active, onClick }) {
           className="session-status-dot"
           style={{ background: STATUS_COLORS[session.status] }}
         />
-        <span className="session-item-name">{session.name}</span>
+        <span className="session-item-name">
+          {session.work_mode === 'ssh' && <span className="ssh-badge" title="SSH 원격">SSH</span>}
+          {session.name}
+        </span>
       </div>
       {(session.status === 'active' || session.status === 'idle') && (
         <button className="session-item-close" onClick={handleDelete} title="세션 종료">

@@ -12,6 +12,7 @@ import authRoutes from './routes/auth.js';
 import sessionRoutes from './routes/sessions.js';
 import fileRoutes from './routes/files.js';
 import logRoutes from './routes/logs.js';
+import sshProfileRoutes from './routes/sshProfiles.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -26,6 +27,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/logs', logRoutes);
+app.use('/api/ssh-profiles', sshProfileRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

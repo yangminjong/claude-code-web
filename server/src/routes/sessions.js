@@ -21,7 +21,7 @@ router.get('/', authenticate, (req, res) => {
 // POST /api/sessions — create session
 router.post('/', authenticate, (req, res) => {
   try {
-    const { name, workMode, projectPath } = req.body;
+    const { name, workMode, projectPath, sshProfileId } = req.body;
     if (!name) {
       return res.status(400).json({
         ok: false,
@@ -31,7 +31,8 @@ router.post('/', authenticate, (req, res) => {
     const session = createSession(req.user.id, {
       name,
       workMode: workMode || 'server',
-      projectPath: projectPath || 'default'
+      projectPath: projectPath || 'default',
+      sshProfileId: sshProfileId || null
     });
     res.status(201).json({ ok: true, data: { session } });
   } catch (err) {

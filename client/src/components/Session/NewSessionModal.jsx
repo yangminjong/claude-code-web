@@ -1,20 +1,37 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSessionStore } from '../../stores/sessionStore.js';
+import { useSshProfileStore } from '../../stores/sshProfileStore.js';
 import toast from 'react-hot-toast';
 
 export default function NewSessionModal({ onClose }) {
   const { createSession, setActiveSession } = useSessionStore();
+  const { profiles, fetchProfiles } = useSshProfileStore();
   const navigate = useNavigate();
   const [name, setName] = useState('');
+  const [workMode, setWorkMode] = useState('server');
   const [projectPath, setProjectPath] = useState('default');
+  const [sshProfileId, setSshProfileId] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetchProfiles();
+  }, [fetchProfiles]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (workMode === 'ssh' && !sshProfileId) {
+      toast.error('SSH 프로필을 선택해주세요');
+      return;
+    }
     setLoading(true);
     try {
-      const session = await createSession(name, 'server', projectPath);
+      const session = await createSession(
+        name,
+        workMode,
+        projectPath,
+        workMode === 'ssh' ? parseInt(sshProfileId, 10) : null
+      );
       setActiveSession(session.id);
       navigate('/');
       onClose();
@@ -47,19 +64,69 @@ export default function NewSessionModal({ onClose }) {
             />
           </div>
           <div className="form-group">
-            <label htmlFor="projectPath">프로젝트 경로</label>
+            <label>작업 모드</label>
+            <div className="mode-toggle">
+              <button
+                type="button"
+                className={`mode-btn ${workMode === 'server' ? 'active' : ''}`}
+                onClick={() => { setWorkMode('server'); setProjectPath('default'); }}
+              >
+                로컬 서버
+              </button>
+              <button
+                type="button"
+                className={`mode-btn ${workMode === 'ssh' ? 'active' : ''}`}
+                onClick={() => { setWorkMode('ssh'); setProjectPath(''); }}
+              >
+                SSH 원격
+              </button>
+            </div>
+          </div>
+
+          {workMode === 'ssh' && (
+            <div className="form-group">
+              <label>SSH 프로필</label>
+              {profiles.length === 0 ? (
+                <p className="form-hint">등록된 SSH 프로필이 없습니다. 설정에서 먼저 추가하세요.</p>
+              ) : (
+                <select
+                  value={sshProfileId}
+                  onChange={(e) => setSshProfileId(e.target.value)}
+                  required
+                >
+                  <option value="">선택하세요</option>
+                  {profiles.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.username}@{p.host})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
+          <div className="form-group">
+            <label htmlFor="projectPath">
+              {workMode === 'ssh' ? '원격 프로젝트 경로' : '프로젝트 경로'}
+            </label>
             <input
               id="projectPath"
               type="text"
               value={projectPath}
               onChange={(e) => setProjectPath(e.target.value)}
-              placeholder="default"
+              placeholder={workMode === 'ssh' ? '/home/ubuntu/project' : 'default'}
+              required={workMode === 'ssh'}
             />
-            <span className="form-hint">workspace/{'{username}'}/{projectPath} 에 생성됩니다</span>
+            {workMode === 'server' && (
+              <span className="form-hint">workspace/{'{username}'}/{projectPath} 에 생성됩니다</span>
+            )}
+            {workMode === 'ssh' && (
+              <span className="form-hint">원격 서버의 절대 경로를 입력하세요</span>
+            )}
           </div>
           <div className="modal-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>취소</button>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
+            <button type="submit" className="btn btn-primary" disabled={loading || (workMode === 'ssh' && profiles.length === 0)}>
               {loading ? '생성 중...' : '세션 생성'}
             </button>
           </div>

@@ -3,12 +3,13 @@ import { mkdirSync } from 'fs';
 import { getDb } from '../db/connection.js';
 import { cleanupSession, cancelProcess } from './processManager.js';
 import { auditLog } from './auditLogger.js';
+import { getProfile, validateRemotePath } from './sshProfileManager.js';
 
 const WORKSPACE_ROOT = () => resolve(process.env.WORKSPACE_ROOT || '../workspace');
 const MAX_SESSIONS = () => parseInt(process.env.MAX_SESSIONS_PER_USER || '3', 10);
 const IDLE_TIMEOUT = () => parseInt(process.env.IDLE_TIMEOUT_MINUTES || '30', 10) * 60 * 1000;
 
-export function createSession(userId, { name, workMode = 'server', projectPath = 'default' }) {
+export function createSession(userId, { name, workMode = 'server', projectPath = 'default', sshProfileId = null }) {
   const db = getDb();
 
   // Check session limit
@@ -23,20 +24,50 @@ export function createSession(userId, { name, workMode = 'server', projectPath =
     throw err;
   }
 
-  // Resolve and create workspace directory
-  const user = db.prepare('SELECT email FROM users WHERE id = ?').get(userId);
-  const username = user.email.split('@')[0];
-  const workDir = resolve(WORKSPACE_ROOT(), username, projectPath);
-  mkdirSync(workDir, { recursive: true });
+  let workDir;
 
-  // Insert session record (no process spawned yet — spawned per-message)
+  if (workMode === 'ssh') {
+    // Validate SSH profile
+    if (!sshProfileId) {
+      const err = new Error('SSH 모드에서는 SSH 프로필을 선택해야 합니다');
+      err.code = 'VALIDATION_ERROR';
+      err.status = 400;
+      throw err;
+    }
+
+    const profile = getProfile(sshProfileId, userId);
+    if (!profile) {
+      const err = new Error('SSH 프로필을 찾을 수 없습니다');
+      err.code = 'PROFILE_NOT_FOUND';
+      err.status = 404;
+      throw err;
+    }
+
+    // Validate remote path against allowed paths
+    if (!validateRemotePath(profile, projectPath)) {
+      const err = new Error('허용되지 않은 원격 경로입니다');
+      err.code = 'PATH_NOT_ALLOWED';
+      err.status = 403;
+      throw err;
+    }
+
+    workDir = projectPath; // remote path as-is
+  } else {
+    // Local mode: resolve and create workspace directory
+    const user = db.prepare('SELECT email FROM users WHERE id = ?').get(userId);
+    const username = user.email.split('@')[0];
+    workDir = resolve(WORKSPACE_ROOT(), username, projectPath);
+    mkdirSync(workDir, { recursive: true });
+  }
+
+  // Insert session record
   const result = db.prepare(
-    'INSERT INTO sessions (user_id, name, work_mode, project_path, status) VALUES (?, ?, ?, ?, ?)'
-  ).run(userId, name, workMode, workDir, 'active');
+    'INSERT INTO sessions (user_id, name, work_mode, project_path, status, ssh_profile_id) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(userId, name, workMode, workDir, 'active', sshProfileId);
 
   const sessionId = result.lastInsertRowid;
 
-  auditLog(userId, 'session_create', { sessionId, name, workDir });
+  auditLog(userId, 'session_create', { sessionId, name, workDir, workMode, sshProfileId });
 
   return db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
 }

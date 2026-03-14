@@ -71,6 +71,14 @@ export const api = {
     }).then(res => res.blob());
   },
 
+  // SSH Profiles
+  getSshProfiles: () => request('GET', '/ssh-profiles'),
+  createSshProfile: (body) => request('POST', '/ssh-profiles', body),
+  getSshProfile: (id) => request('GET', `/ssh-profiles/${id}`),
+  updateSshProfile: (id, body) => request('PUT', `/ssh-profiles/${id}`, body),
+  deleteSshProfile: (id) => request('DELETE', `/ssh-profiles/${id}`),
+  testSshProfile: (id) => request('POST', `/ssh-profiles/${id}/test`),
+
   // Logs
   getLogs: (page = 1, limit = 50, action) => {
     let url = `/logs?page=${page}&limit=${limit}`;

@@ -18,8 +18,8 @@ export const useSessionStore = create((set, get) => ({
     }
   },
 
-  createSession: async (name, workMode = 'server', projectPath = 'default') => {
-    const { session } = await api.createSession({ name, workMode, projectPath });
+  createSession: async (name, workMode = 'server', projectPath = 'default', sshProfileId = null) => {
+    const { session } = await api.createSession({ name, workMode, projectPath, sshProfileId });
     set((s) => ({ sessions: [session, ...s.sessions] }));
     return session;
   },

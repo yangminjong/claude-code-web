@@ -1,14 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth.js';
+import { useSshProfileStore } from '../../stores/sshProfileStore.js';
 import { api } from '../../api/client.js';
+import SshProfileForm from './SshProfileForm.jsx';
 import toast from 'react-hot-toast';
 import './Settings.css';
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const { profiles, fetchProfiles, deleteProfile } = useSshProfileStore();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showSshForm, setShowSshForm] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(null);
+
+  useEffect(() => {
+    fetchProfiles();
+  }, [fetchProfiles]);
 
   const handlePasswordChange = async (e) => {
     e.preventDefault();
@@ -26,6 +35,16 @@ export default function SettingsPage() {
       toast.error(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteProfile = async (id, name) => {
+    if (!confirm(`"${name}" 프로필을 삭제하시겠습니까?`)) return;
+    try {
+      await deleteProfile(id);
+      toast.success('SSH 프로필이 삭제되었습니다');
+    } catch (err) {
+      toast.error(err.message);
     }
   };
 
@@ -93,10 +112,42 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="settings-section disabled">
-        <h3>SSH 모드 <span className="badge">2차 개발</span></h3>
-        <p className="settings-desc">SSH 접속을 통한 원격 서버 작업을 지원할 예정입니다.</p>
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <h3>SSH 프로필</h3>
+          <button className="btn btn-sm btn-primary" onClick={() => { setEditingProfile(null); setShowSshForm(true); }}>
+            + 추가
+          </button>
+        </div>
+        {profiles.length === 0 ? (
+          <p className="settings-desc">등록된 SSH 프로필이 없습니다. 원격 서버에서 Claude Code를 사용하려면 프로필을 추가하세요.</p>
+        ) : (
+          <div className="ssh-profile-list">
+            {profiles.map(p => (
+              <div key={p.id} className="ssh-profile-item">
+                <div className="ssh-profile-info">
+                  <span className="ssh-profile-name">{p.name}</span>
+                  <span className="ssh-profile-detail">{p.username}@{p.host}:{p.port}</span>
+                  {p.last_connected_at && (
+                    <span className="ssh-profile-meta">마지막 연결: {new Date(p.last_connected_at).toLocaleDateString()}</span>
+                  )}
+                </div>
+                <div className="ssh-profile-actions">
+                  <button className="btn btn-sm btn-secondary" onClick={() => { setEditingProfile(p); setShowSshForm(true); }}>수정</button>
+                  <button className="btn btn-sm btn-danger" onClick={() => handleDeleteProfile(p.id, p.name)}>삭제</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
+
+      {showSshForm && (
+        <SshProfileForm
+          profile={editingProfile}
+          onClose={() => { setShowSshForm(false); setEditingProfile(null); }}
+        />
+      )}
     </div>
   );
 }

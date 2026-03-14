@@ -12,6 +12,7 @@ export default function SshProfileForm({ profile, onClose }) {
     port: profile?.port || 22,
     username: profile?.username || '',
     authMethod: profile?.auth_method || 'key',
+    remoteOs: profile?.remote_os || 'linux',
     credential: '',
     allowedPaths: profile?.allowed_paths ? JSON.parse(profile.allowed_paths).join('\n') : ''
   });
@@ -32,6 +33,7 @@ export default function SshProfileForm({ profile, onClose }) {
         port: parseInt(form.port, 10),
         username: form.username,
         authMethod: form.authMethod,
+        remoteOs: form.remoteOs,
         allowedPaths: form.allowedPaths.split('\n').map(p => p.trim()).filter(Boolean)
       };
       if (form.credential) data.credential = form.credential;
@@ -99,6 +101,19 @@ export default function SshProfileForm({ profile, onClose }) {
           <div className="form-group">
             <label>사용자명</label>
             <input type="text" value={form.username} onChange={handleChange('username')} placeholder="ubuntu" required />
+          </div>
+          <div className="form-group">
+            <label>원격 OS</label>
+            <div className="radio-group">
+              <label className="radio-label">
+                <input type="radio" value="linux" checked={form.remoteOs === 'linux'} onChange={handleChange('remoteOs')} />
+                Linux / macOS
+              </label>
+              <label className="radio-label">
+                <input type="radio" value="windows" checked={form.remoteOs === 'windows'} onChange={handleChange('remoteOs')} />
+                Windows
+              </label>
+            </div>
           </div>
           <div className="form-group">
             <label>인증 방식</label>

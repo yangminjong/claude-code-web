@@ -22,7 +22,7 @@ router.get('/', authenticate, (req, res) => {
 // POST /api/ssh-profiles
 router.post('/', authenticate, (req, res) => {
   try {
-    const { name, host, port, username, authMethod, credential, allowedPaths } = req.body;
+    const { name, host, port, username, authMethod, credential, allowedPaths, remoteOs } = req.body;
 
     if (!name || !host || !username || !credential) {
       return res.status(400).json({
@@ -41,7 +41,8 @@ router.post('/', authenticate, (req, res) => {
     const profile = createProfile(req.user.id, {
       name, host, port: port || 22, username,
       authMethod: authMethod || 'key', credential,
-      allowedPaths: allowedPaths || []
+      allowedPaths: allowedPaths || [],
+      remoteOs: remoteOs || 'linux'
     });
 
     res.status(201).json({ ok: true, data: { profile } });
@@ -77,13 +78,14 @@ router.get('/:id', authenticate, (req, res) => {
 // PUT /api/ssh-profiles/:id
 router.put('/:id', authenticate, (req, res) => {
   try {
-    const { name, host, port, username, authMethod, credential, allowedPaths } = req.body;
+    const { name, host, port, username, authMethod, credential, allowedPaths, remoteOs } = req.body;
     const updates = {};
     if (name !== undefined) updates.name = name;
     if (host !== undefined) updates.host = host;
     if (port !== undefined) updates.port = port;
     if (username !== undefined) updates.username = username;
     if (authMethod !== undefined) updates.auth_method = authMethod;
+    if (remoteOs !== undefined) updates.remote_os = remoteOs;
     if (credential) updates.credential = credential;
     if (allowedPaths !== undefined) updates.allowedPaths = allowedPaths;
 

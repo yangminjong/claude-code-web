@@ -133,7 +133,8 @@ function handleUserMessage(ws, sessionId, session, content) {
         port: profile.port,
         username: profile.username,
         authMethod: profile.auth_method,
-        credential: profile.credential
+        credential: profile.credential,
+        remoteOs: profile.remote_os || 'linux'
       });
       updateLastConnected(profile.id);
       auditLog(session.user_id, 'ssh_connect', { profileId: profile.id, host: profile.host });

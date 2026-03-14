@@ -83,8 +83,22 @@ class SSHProcessWrapper extends EventEmitter {
   }
 }
 
-function shellEscape(s) {
+function shellEscapeUnix(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+function shellEscapeWindows(s) {
+  // cmd.exe: wrap in double quotes, escape inner double quotes with \"
+  return '"' + s.replace(/"/g, '\\"') + '"';
+}
+
+function buildRemoteCmd(args, remotePath, remoteOs) {
+  if (remoteOs === 'windows') {
+    const escaped = args.map(a => shellEscapeWindows(a)).join(' ');
+    return `cd /d ${shellEscapeWindows(remotePath)} && claude ${escaped}`;
+  }
+  const escaped = args.map(a => shellEscapeUnix(a)).join(' ');
+  return `cd ${shellEscapeUnix(remotePath)} && claude ${escaped}`;
 }
 
 /**
@@ -97,8 +111,7 @@ export function sendMessageSSH(webSessionId, message, remotePath, claudeSessionI
   const conn = new SSHClient();
 
   const args = buildArgs(message, claudeSessionId);
-  const escapedArgs = args.map(a => shellEscape(a)).join(' ');
-  const remoteCmd = `cd ${shellEscape(remotePath)} && claude ${escapedArgs}`;
+  const remoteCmd = buildRemoteCmd(args, remotePath, sshConfig.remoteOs || 'linux');
 
   conn.on('ready', () => {
     conn.exec(remoteCmd, (err, stream) => {

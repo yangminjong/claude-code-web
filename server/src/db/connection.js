@@ -23,9 +23,14 @@ export function getDb() {
   db.exec(schema);
 
   // Migrations
-  const columns = db.pragma('table_info(sessions)').map(c => c.name);
-  if (!columns.includes('ssh_profile_id')) {
+  const sessionCols = db.pragma('table_info(sessions)').map(c => c.name);
+  if (!sessionCols.includes('ssh_profile_id')) {
     db.exec('ALTER TABLE sessions ADD COLUMN ssh_profile_id INTEGER REFERENCES ssh_profiles(id)');
+  }
+
+  const sshCols = db.pragma('table_info(ssh_profiles)').map(c => c.name);
+  if (sshCols.length > 0 && !sshCols.includes('remote_os')) {
+    db.exec("ALTER TABLE ssh_profiles ADD COLUMN remote_os TEXT NOT NULL DEFAULT 'linux' CHECK(remote_os IN ('linux', 'windows'))");
   }
 
   return db;

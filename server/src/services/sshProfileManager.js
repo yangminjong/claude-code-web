@@ -2,15 +2,15 @@ import { getDb } from '../db/connection.js';
 import { encryptCredential, decryptCredential } from '../utils/crypto.js';
 import { auditLog } from './auditLogger.js';
 
-export function createProfile(userId, { name, host, port = 22, username, authMethod = 'key', credential, allowedPaths = [] }) {
+export function createProfile(userId, { name, host, port = 22, username, authMethod = 'key', credential, allowedPaths = [], remoteOs = 'linux' }) {
   const db = getDb();
 
   const { encrypted, iv, tag } = encryptCredential(credential);
 
   const result = db.prepare(`
-    INSERT INTO ssh_profiles (user_id, name, host, port, username, auth_method, encrypted_credential, credential_iv, credential_tag, allowed_paths)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(userId, name, host, port, username, authMethod, encrypted, iv, tag, JSON.stringify(allowedPaths));
+    INSERT INTO ssh_profiles (user_id, name, host, port, username, auth_method, encrypted_credential, credential_iv, credential_tag, allowed_paths, remote_os)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(userId, name, host, port, username, authMethod, encrypted, iv, tag, JSON.stringify(allowedPaths), remoteOs);
 
   auditLog(userId, 'ssh_profile_create', { profileId: result.lastInsertRowid, name, host });
 
@@ -19,13 +19,13 @@ export function createProfile(userId, { name, host, port = 22, username, authMet
 
 export function getProfiles(userId) {
   return getDb().prepare(
-    'SELECT id, user_id, name, host, port, username, auth_method, allowed_paths, is_active, last_connected_at, created_at, updated_at FROM ssh_profiles WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC'
+    'SELECT id, user_id, name, host, port, username, auth_method, remote_os, allowed_paths, is_active, last_connected_at, created_at, updated_at FROM ssh_profiles WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC'
   ).all(userId);
 }
 
 export function getProfile(profileId, userId) {
   return getDb().prepare(
-    'SELECT id, user_id, name, host, port, username, auth_method, allowed_paths, fingerprint, is_active, last_connected_at, created_at, updated_at FROM ssh_profiles WHERE id = ? AND user_id = ? AND is_active = 1'
+    'SELECT id, user_id, name, host, port, username, auth_method, remote_os, allowed_paths, fingerprint, is_active, last_connected_at, created_at, updated_at FROM ssh_profiles WHERE id = ? AND user_id = ? AND is_active = 1'
   ).get(profileId, userId);
 }
 
@@ -53,7 +53,7 @@ export function updateProfile(profileId, userId, updates) {
   const fields = [];
   const values = [];
 
-  for (const key of ['name', 'host', 'port', 'username', 'auth_method']) {
+  for (const key of ['name', 'host', 'port', 'username', 'auth_method', 'remote_os']) {
     if (updates[key] !== undefined) {
       fields.push(`${key === 'auth_method' ? 'auth_method' : key} = ?`);
       values.push(updates[key]);

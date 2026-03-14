@@ -114,14 +114,20 @@ export default function NewSessionModal({ onClose }) {
               type="text"
               value={projectPath}
               onChange={(e) => setProjectPath(e.target.value)}
-              placeholder={workMode === 'ssh' ? '/home/ubuntu/project' : 'default'}
+              placeholder={workMode === 'ssh'
+                ? (profiles.find(p => String(p.id) === sshProfileId)?.remote_os === 'windows' ? 'C:\\Users\\user\\project' : '/home/ubuntu/project')
+                : 'default'
+              }
               required={workMode === 'ssh'}
             />
             {workMode === 'server' && (
               <span className="form-hint">workspace/{'{username}'}/{projectPath} 에 생성됩니다</span>
             )}
             {workMode === 'ssh' && (
-              <span className="form-hint">원격 서버의 절대 경로를 입력하세요</span>
+              <span className="form-hint">
+                원격 서버의 절대 경로를 입력하세요
+                {profiles.find(p => String(p.id) === sshProfileId)?.remote_os === 'windows' && ' (Windows 경로)'}
+              </span>
             )}
           </div>
           <div className="modal-actions">

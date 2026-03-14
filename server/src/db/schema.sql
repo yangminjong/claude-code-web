@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS ssh_profiles (
     encrypted_credential TEXT,
     credential_iv TEXT,
     credential_tag TEXT,
+    remote_os TEXT NOT NULL DEFAULT 'linux' CHECK(remote_os IN ('linux', 'windows')),
     fingerprint TEXT,
     allowed_paths TEXT DEFAULT '[]',
     is_active INTEGER NOT NULL DEFAULT 1,

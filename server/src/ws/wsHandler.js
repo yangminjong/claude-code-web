@@ -10,28 +10,23 @@ import { auditLog } from '../services/auditLogger.js';
  * Handles multiple possible output formats from Claude Code CLI.
  */
 function extractText(obj) {
-  // {"type":"assistant","content":"text"}
-  if (obj.type === 'assistant' && typeof obj.content === 'string') {
-    return obj.content;
+  // stream_event with text_delta — token-level streaming
+  if (obj.type === 'stream_event' && obj.event?.type === 'content_block_delta'
+      && obj.event.delta?.type === 'text_delta') {
+    return obj.event.delta.text;
   }
   // {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
   if (obj.type === 'content_block_delta' && obj.delta?.text) {
     return obj.delta.text;
   }
+  // Skip partial assistant messages (already handled via stream_event deltas)
+  // Only use the final assistant message if no stream_event deltas were received
+  if (obj.type === 'assistant' && obj.message?.content) {
+    return null;
+  }
   // {"type":"text","text":"..."}
   if (obj.type === 'text' && typeof obj.text === 'string') {
     return obj.text;
-  }
-  // content is array of {type:"text",text:"..."}
-  if (Array.isArray(obj.content)) {
-    const texts = obj.content
-      .filter(c => c.type === 'text' && c.text)
-      .map(c => c.text);
-    if (texts.length > 0) return texts.join('');
-  }
-  // {"message":{"content":[...]}}
-  if (obj.message?.content) {
-    return extractText({ content: obj.message.content });
   }
   return null;
 }
@@ -163,11 +158,13 @@ function handleUserMessage(ws, sessionId, session, content) {
       addMessage(sessionId, 'assistant', fullResponse);
     }
 
-    ws.send(JSON.stringify({
-      type: 'assistant_end',
-      content: fullResponse,
-      exitCode: code
-    }));
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'assistant_end',
+        content: fullResponse,
+        exitCode: code
+      }));
+    }
   });
 
   proc.on('error', (err) => {
@@ -191,6 +188,15 @@ function handleUserMessage(ws, sessionId, session, content) {
         }
       }
 
+      // Fallback: if result has text and we got nothing from streaming
+      if (obj.type === 'result' && obj.result && !fullResponse) {
+        fullResponse = obj.result;
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'assistant_chunk', content: obj.result }));
+        }
+        return;
+      }
+
       // Extract text and send to client
       const text = extractText(obj);
       if (text) {
@@ -200,14 +206,7 @@ function handleUserMessage(ws, sessionId, session, content) {
         }
       }
     } catch {
-      // Not valid JSON — might be plain text output from claude
-      // Send it as-is if it looks like content
-      if (line.trim() && !line.startsWith('{')) {
-        fullResponse += line;
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'assistant_chunk', content: line }));
-        }
-      }
+      // Not valid JSON — ignore non-JSON output
     }
   }
 }

@@ -108,5 +108,19 @@ export function updateFingerprint(profileId, fingerprint) {
 export function validateRemotePath(profile, requestedPath) {
   const allowedPaths = JSON.parse(profile.allowed_paths || '[]');
   if (allowedPaths.length === 0) return true;
-  return allowedPaths.some(base => requestedPath === base || requestedPath.startsWith(base + '/'));
+
+  const isWindows = (profile.remote_os === 'windows');
+
+  return allowedPaths.some(base => {
+    let req = requestedPath;
+    let allowed = base;
+
+    if (isWindows) {
+      // Windows: case-insensitive, normalize backslash/slash
+      req = req.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+      allowed = allowed.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+    }
+
+    return req === allowed || req.startsWith(allowed + (isWindows ? '\\' : '/'));
+  });
 }

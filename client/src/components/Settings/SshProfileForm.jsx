@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useSshProfileStore } from '../../stores/sshProfileStore.js';
+import RemoteFolderBrowser from './RemoteFolderBrowser.jsx';
 import toast from 'react-hot-toast';
 
 export default function SshProfileForm({ profile, onClose }) {
@@ -14,13 +15,31 @@ export default function SshProfileForm({ profile, onClose }) {
     authMethod: profile?.auth_method || 'key',
     remoteOs: profile?.remote_os || 'linux',
     credential: '',
-    allowedPaths: profile?.allowed_paths ? JSON.parse(profile.allowed_paths).join('\n') : ''
+    allowedPaths: profile?.allowed_paths ? JSON.parse(profile.allowed_paths) : []
   });
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [showBrowser, setShowBrowser] = useState(false);
 
   const handleChange = (field) => (e) => {
     setForm(f => ({ ...f, [field]: e.target.value }));
+  };
+
+  const handleAddPath = (path) => {
+    setForm(f => {
+      if (f.allowedPaths.includes(path)) {
+        toast.error('이미 추가된 경로입니다');
+        return f;
+      }
+      return { ...f, allowedPaths: [...f.allowedPaths, path] };
+    });
+  };
+
+  const handleRemovePath = (index) => {
+    setForm(f => ({
+      ...f,
+      allowedPaths: f.allowedPaths.filter((_, i) => i !== index)
+    }));
   };
 
   const handleSubmit = async (e) => {
@@ -34,7 +53,7 @@ export default function SshProfileForm({ profile, onClose }) {
         username: form.username,
         authMethod: form.authMethod,
         remoteOs: form.remoteOs,
-        allowedPaths: form.allowedPaths.split('\n').map(p => p.trim()).filter(Boolean)
+        allowedPaths: form.allowedPaths
       };
       if (form.credential) data.credential = form.credential;
 
@@ -149,13 +168,46 @@ export default function SshProfileForm({ profile, onClose }) {
             {isEdit && <span className="form-hint">비워두면 기존 인증 정보가 유지됩니다</span>}
           </div>
           <div className="form-group">
-            <label>허용 경로 (줄바꿈 구분, 비우면 제한 없음)</label>
-            <textarea
-              value={form.allowedPaths}
-              onChange={handleChange('allowedPaths')}
-              placeholder="/home/ubuntu/projects&#10;/var/www"
-              rows={3}
-            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <label style={{ margin: 0 }}>허용 경로 (비우면 제한 없음)</label>
+              {isEdit && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowBrowser(true)}
+                >
+                  폴더 찾아보기
+                </button>
+              )}
+            </div>
+            {!isEdit && (
+              <span className="form-hint" style={{ marginBottom: '8px', display: 'block' }}>
+                프로필을 먼저 저장한 후 폴더 찾아보기를 사용할 수 있습니다
+              </span>
+            )}
+            {form.allowedPaths.length === 0 ? (
+              <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius)', fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                제한 없음 - 모든 경로에 접근 가능
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {form.allowedPaths.map((p, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: '14px' }}>&#x1F4C1;</span>
+                    <span style={{ flex: 1, fontFamily: 'monospace', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p}</span>
+                    <button
+                      type="button"
+                      className="btn-icon"
+                      onClick={() => handleRemovePath(i)}
+                      style={{ fontSize: '16px', color: 'var(--text-muted)', flexShrink: 0 }}
+                      title="제거"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="modal-actions">
             {isEdit && (
@@ -171,6 +223,15 @@ export default function SshProfileForm({ profile, onClose }) {
           </div>
         </form>
       </div>
+
+      {showBrowser && (
+        <RemoteFolderBrowser
+          profileId={profile.id}
+          remoteOs={form.remoteOs}
+          onSelect={handleAddPath}
+          onClose={() => setShowBrowser(false)}
+        />
+      )}
     </div>
   );
 }

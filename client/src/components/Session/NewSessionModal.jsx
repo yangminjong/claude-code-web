@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSessionStore } from '../../stores/sessionStore.js';
 import { useSshProfileStore } from '../../stores/sshProfileStore.js';
+import RemoteFolderBrowser from '../Settings/RemoteFolderBrowser.jsx';
 import toast from 'react-hot-toast';
 
 export default function NewSessionModal({ onClose }) {
@@ -13,10 +14,13 @@ export default function NewSessionModal({ onClose }) {
   const [projectPath, setProjectPath] = useState('default');
   const [sshProfileId, setSshProfileId] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showBrowser, setShowBrowser] = useState(false);
 
   useEffect(() => {
     fetchProfiles();
   }, [fetchProfiles]);
+
+  const selectedProfile = profiles.find(p => String(p.id) === sshProfileId);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -109,24 +113,37 @@ export default function NewSessionModal({ onClose }) {
             <label htmlFor="projectPath">
               {workMode === 'ssh' ? '원격 프로젝트 경로' : '프로젝트 경로'}
             </label>
-            <input
-              id="projectPath"
-              type="text"
-              value={projectPath}
-              onChange={(e) => setProjectPath(e.target.value)}
-              placeholder={workMode === 'ssh'
-                ? (profiles.find(p => String(p.id) === sshProfileId)?.remote_os === 'windows' ? 'C:\\Users\\user\\project' : '/home/ubuntu/project')
-                : 'default'
-              }
-              required={workMode === 'ssh'}
-            />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                id="projectPath"
+                type="text"
+                value={projectPath}
+                onChange={(e) => setProjectPath(e.target.value)}
+                placeholder={workMode === 'ssh'
+                  ? (selectedProfile?.remote_os === 'windows' ? 'C:\\Users\\user\\project' : '/home/ubuntu/project')
+                  : 'default'
+                }
+                required={workMode === 'ssh'}
+                style={{ flex: 1 }}
+              />
+              {workMode === 'ssh' && sshProfileId && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowBrowser(true)}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  찾아보기
+                </button>
+              )}
+            </div>
             {workMode === 'server' && (
               <span className="form-hint">workspace/{'{username}'}/{projectPath} 에 생성됩니다</span>
             )}
             {workMode === 'ssh' && (
               <span className="form-hint">
-                원격 서버의 절대 경로를 입력하세요
-                {profiles.find(p => String(p.id) === sshProfileId)?.remote_os === 'windows' && ' (Windows 경로)'}
+                원격 서버의 절대 경로를 입력하거나 찾아보기로 선택하세요
+                {selectedProfile?.remote_os === 'windows' && ' (Windows 경로)'}
               </span>
             )}
           </div>
@@ -138,6 +155,15 @@ export default function NewSessionModal({ onClose }) {
           </div>
         </form>
       </div>
+
+      {showBrowser && sshProfileId && (
+        <RemoteFolderBrowser
+          profileId={parseInt(sshProfileId, 10)}
+          remoteOs={selectedProfile?.remote_os || 'linux'}
+          onSelect={(path) => setProjectPath(path)}
+          onClose={() => setShowBrowser(false)}
+        />
+      )}
     </div>
   );
 }

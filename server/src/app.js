@@ -8,6 +8,7 @@ import { existsSync } from 'fs';
 import { getDb, closeDb } from './db/connection.js';
 import { setupWebSocket } from './ws/wsServer.js';
 import { startHeartbeatChecker } from './services/sessionManager.js';
+import { cleanupAllMounts } from './services/processManager.js';
 import authRoutes from './routes/auth.js';
 import sessionRoutes from './routes/sessions.js';
 import fileRoutes from './routes/files.js';
@@ -55,6 +56,7 @@ app.use((err, req, res, next) => {
 });
 
 // Initialize
+cleanupAllMounts(); // Clean stale SSHFS mounts from previous run
 const db = getDb();
 console.log('[server] Database initialized');
 
@@ -67,18 +69,14 @@ server.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('[server] SIGTERM received, shutting down...');
+function shutdown(signal) {
+  console.log(`[server] ${signal} received, shutting down...`);
+  cleanupAllMounts();
   server.close(() => {
     closeDb();
     process.exit(0);
   });
-});
+}
 
-process.on('SIGINT', () => {
-  console.log('[server] SIGINT received, shutting down...');
-  server.close(() => {
-    closeDb();
-    process.exit(0);
-  });
-});
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

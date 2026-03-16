@@ -2,6 +2,50 @@
 
 ---
 
+## 2026-03-16
+
+### 4. [2차] SSH 모드 — SSHFS 아키텍처 전환 및 안정화
+
+SSH 모드의 아키텍처를 근본적으로 변경하고, 원격 폴더 탐색기 및 HTTPS 설정 추가.
+
+**아키텍처 변경 (processManager.js 전면 재작성):**
+- 이전: SSH로 원격 머신에서 `claude` 실행 (원격 머신에 Claude CLI 필요)
+- 변경: **SSHFS로 원격 파일시스템 마운트 → 로컬 `claude`가 마운트된 경로에서 실행**
+- `sshfs -f` (포그라운드 모드) + `spawn`으로 sshfs 프로세스를 Node.js 자식 프로세스로 관리
+- 세션별 마운트 포인트: `/tmp/claude-sshfs/{sessionId}/`
+- 세션 종료 시 sshfs 프로세스 종료 → 자동 unmount
+- 서버 시작/종료 시 잔존 마운트 자동 정리 (`cleanupAllMounts`)
+- `sshpass -f` (파일 기반 비밀번호) 방식으로 특수문자 이슈 해결
+
+**원격 폴더 탐색기 (신규):**
+- 백엔드: `POST /api/ssh-profiles/:id/browse` — SFTP 프로토콜로 원격 디렉토리 조회 (OS 무관)
+- 프론트엔드: `RemoteFolderBrowser.jsx` — 모달형 원격 폴더 탐색기
+  - breadcrumb 네비게이션, 폴더 클릭 탐색, 상위 이동
+  - Windows: 드라이브 목록 표시 (C:, D: 등), `showDirectoryPicker()` 네이티브 선택 지원
+  - Linux: `/` 루트부터 탐색
+- `SshProfileForm.jsx` — 허용 경로: textarea 수동 입력 → 폴더 찾아보기 + 경로 목록 UI
+- `NewSessionModal.jsx` — SSH 모드에서 프로젝트 경로 옆 "찾아보기" 버튼 추가
+
+**Windows 경로 호환성:**
+- `validateRemotePath()` — Windows 경로 구분자(`\`) 및 대소문자 무시 비교 추가
+- SSHFS Windows 경로 변환: `C:\work\test` → `/C:/work/test` (SFTP 형식)
+- SFTP browse에서 Windows 드라이브 목록 지원
+
+**HTTPS 설정:**
+- nginx reverse proxy 설정: `work.forelinkapp.com` → `localhost:3000`
+- Let's Encrypt SSL 인증서 (certbot)
+- HTTP → HTTPS 자동 리다이렉트
+- WebSocket 프록시 지원 (`Upgrade`, `Connection` 헤더)
+
+**권한 처리:**
+- `--dangerously-skip-permissions` 플래그 추가 (웹 환경에서 터미널 권한 프롬프트 불가)
+- 보안은 웹 앱 자체의 인증(JWT), 경로 제한(allowed_paths), 사용자 격리로 처리
+
+**의존성:**
+- 시스템: `fuse-sshfs`, `sshpass` 패키지 설치 필요
+
+---
+
 ## 2026-03-14
 
 ### 3. [2차] SSH 모드 구현

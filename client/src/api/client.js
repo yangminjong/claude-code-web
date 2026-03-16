@@ -78,6 +78,7 @@ export const api = {
   updateSshProfile: (id, body) => request('PUT', `/ssh-profiles/${id}`, body),
   deleteSshProfile: (id) => request('DELETE', `/ssh-profiles/${id}`),
   testSshProfile: (id) => request('POST', `/ssh-profiles/${id}/test`),
+  browseSshProfile: (id, path) => request('POST', `/ssh-profiles/${id}/browse`, { path }),
 
   // Logs
   getLogs: (page = 1, limit = 50, action) => {

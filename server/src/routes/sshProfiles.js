@@ -120,6 +120,155 @@ router.delete('/:id', authenticate, (req, res) => {
   }
 });
 
+// POST /api/ssh-profiles/:id/browse — browse remote directories via SFTP
+router.post('/:id/browse', authenticate, (req, res) => {
+  const profileData = getProfileWithCredential(parseInt(req.params.id, 10), req.user.id);
+  if (!profileData) {
+    return res.status(404).json({
+      ok: false,
+      error: { code: 'PROFILE_NOT_FOUND', message: 'SSH 프로필을 찾을 수 없습니다' }
+    });
+  }
+
+  const { path: remotePath } = req.body;
+  const isWindows = profileData.remote_os === 'windows';
+
+  // SFTP uses forward slashes even on Windows OpenSSH
+  // Windows OpenSSH exposes drives as /C:, /D: etc at root
+  let sftpPath;
+  if (!remotePath) {
+    sftpPath = '/';
+  } else if (isWindows && /^[A-Za-z]:\\/.test(remotePath)) {
+    // Convert C:\Users\... → /C:/Users/...
+    sftpPath = '/' + remotePath.replace(/\\/g, '/');
+  } else if (isWindows && /^[A-Za-z]:$/.test(remotePath)) {
+    // Convert C: → /C:/
+    sftpPath = '/' + remotePath + '/';
+  } else {
+    sftpPath = remotePath;
+  }
+
+  const conn = new Client();
+  let responded = false;
+
+  const timeout = setTimeout(() => {
+    if (!responded) {
+      responded = true;
+      conn.end();
+      res.status(504).json({
+        ok: false,
+        error: { code: 'SSH_TIMEOUT', message: '연결 시간이 초과되었습니다 (15초)' }
+      });
+    }
+  }, 15000);
+
+  conn.on('ready', () => {
+    conn.sftp((sftpErr, sftp) => {
+      if (sftpErr) {
+        clearTimeout(timeout);
+        if (!responded) {
+          responded = true;
+          conn.end();
+          res.status(500).json({
+            ok: false,
+            error: { code: 'SFTP_ERROR', message: `SFTP 세션 실패: ${sftpErr.message}` }
+          });
+        }
+        return;
+      }
+
+      sftp.readdir(sftpPath, (readErr, list) => {
+        clearTimeout(timeout);
+        conn.end();
+        if (responded) return;
+        responded = true;
+
+        if (readErr) {
+          return res.status(400).json({
+            ok: false,
+            error: { code: 'BROWSE_ERROR', message: `디렉토리를 읽을 수 없습니다: ${readErr.message}` }
+          });
+        }
+
+        // Filter directories only
+        let dirs = list
+          .filter(item => item.attrs.isDirectory())
+          .filter(item => item.filename !== '.' && item.filename !== '..')
+          .map(item => {
+            let dirPath;
+            if (isWindows) {
+              if (sftpPath === '/') {
+                // Root level: items are drive letters like "C:"
+                dirPath = item.filename;
+              } else {
+                // Convert SFTP path back to Windows path
+                // /C:/Users/name → C:\Users\name\childDir
+                const winBase = sftpPath.replace(/^\//, '').replace(/\//g, '\\').replace(/\\+$/, '');
+                dirPath = winBase + '\\' + item.filename;
+              }
+            } else {
+              dirPath = sftpPath === '/' ? '/' + item.filename : sftpPath.replace(/\/+$/, '') + '/' + item.filename;
+            }
+            return { name: item.filename, path: dirPath };
+          });
+
+        // Filter hidden dirs on unix
+        if (!isWindows) {
+          dirs = dirs.filter(d => !d.name.startsWith('.'));
+        }
+
+        dirs.sort((a, b) => a.name.localeCompare(b.name));
+
+        // Build display path
+        let displayPath;
+        if (isWindows) {
+          if (sftpPath === '/') {
+            displayPath = '/';
+          } else {
+            displayPath = sftpPath.replace(/^\//, '').replace(/\//g, '\\').replace(/\\+$/, '');
+          }
+        } else {
+          displayPath = sftpPath;
+        }
+
+        res.json({
+          ok: true,
+          data: {
+            currentPath: displayPath,
+            directories: dirs
+          }
+        });
+      });
+    });
+  });
+
+  conn.on('error', (err) => {
+    clearTimeout(timeout);
+    if (!responded) {
+      responded = true;
+      res.status(400).json({
+        ok: false,
+        error: { code: 'SSH_CONNECTION_FAILED', message: `SSH 연결 실패: ${err.message}` }
+      });
+    }
+  });
+
+  const connectOpts = {
+    host: profileData.host,
+    port: profileData.port,
+    username: profileData.username,
+    readyTimeout: 15000
+  };
+
+  if (profileData.auth_method === 'key') {
+    connectOpts.privateKey = profileData.credential;
+  } else {
+    connectOpts.password = profileData.credential;
+  }
+
+  conn.connect(connectOpts);
+});
+
 // POST /api/ssh-profiles/:id/test
 router.post('/:id/test', authenticate, (req, res) => {
   const profileData = getProfileWithCredential(parseInt(req.params.id, 10), req.user.id);

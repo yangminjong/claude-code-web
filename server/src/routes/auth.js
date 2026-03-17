@@ -1,11 +1,27 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
+import { resolve, dirname } from 'path';
+import { mkdirSync, copyFileSync, renameSync, unlinkSync, existsSync, createReadStream } from 'fs';
+import multer from 'multer';
 import { getDb } from '../db/connection.js';
 import { signToken } from '../utils/jwt.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { auditLog } from '../services/auditLogger.js';
 
 const router = Router();
+
+const AVATAR_DIR = () => resolve(process.env.WORKSPACE_ROOT || '../workspace', '../avatars');
+const avatarUpload = multer({
+  dest: '/tmp/claude-code-web-avatars',
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: (req, file, cb) => {
+    if (/^image\/(jpeg|png|gif|webp)$/.test(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('이미지 파일만 업로드할 수 있습니다 (JPEG, PNG, GIF, WebP)'));
+    }
+  }
+});
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -33,7 +49,7 @@ router.post('/register', async (req, res) => {
       'INSERT INTO users (email, password_hash, display_name) VALUES (?, ?, ?)'
     ).run(email, passwordHash, displayName);
 
-    const user = { id: result.lastInsertRowid, email, displayName };
+    const user = { id: result.lastInsertRowid, email, displayName, avatarUrl: null };
     const token = signToken({ userId: user.id });
 
     res.status(201).json({ ok: true, data: { user, token } });
@@ -66,7 +82,7 @@ router.post('/login', async (req, res) => {
     res.json({
       ok: true,
       data: {
-        user: { id: user.id, email: user.email, displayName: user.display_name },
+        user: { id: user.id, email: user.email, displayName: user.display_name, avatarUrl: user.avatar_url || null },
         token
       }
     });
@@ -90,7 +106,8 @@ router.get('/me', authenticate, (req, res) => {
       user: {
         id: req.user.id,
         email: req.user.email,
-        displayName: req.user.display_name
+        displayName: req.user.display_name,
+        avatarUrl: req.user.avatar_url || null
       }
     }
   });
@@ -116,6 +133,90 @@ router.put('/password', authenticate, async (req, res) => {
     res.json({ ok: true, data: { ok: true } });
   } catch (err) {
     console.error('[auth] Password change error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// POST /api/auth/avatar — upload profile avatar
+router.post('/avatar', authenticate, avatarUpload.single('avatar'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '이미지 파일이 필요합니다' }
+      });
+    }
+
+    const avatarDir = AVATAR_DIR();
+    mkdirSync(avatarDir, { recursive: true });
+
+    // Delete old avatar if exists
+    const db = getDb();
+    const oldAvatar = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
+    if (oldAvatar?.avatar_url) {
+      const oldPath = resolve(avatarDir, oldAvatar.avatar_url);
+      if (existsSync(oldPath)) {
+        try { unlinkSync(oldPath); } catch {}
+      }
+    }
+
+    // Save with unique name (copyFile + unlink for cross-device support)
+    const ext = req.file.originalname.split('.').pop() || 'jpg';
+    const filename = `${req.user.id}_${Date.now()}.${ext}`;
+    const targetPath = resolve(avatarDir, filename);
+    copyFileSync(req.file.path, targetPath);
+    try { unlinkSync(req.file.path); } catch {}
+
+    // Update DB
+    db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(filename, req.user.id);
+
+    res.json({
+      ok: true,
+      data: { avatarUrl: `/api/auth/avatar/${filename}` }
+    });
+  } catch (err) {
+    console.error('[auth] Avatar upload error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// DELETE /api/auth/avatar — remove profile avatar
+router.delete('/avatar', authenticate, (req, res) => {
+  try {
+    const db = getDb();
+    const user = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
+    if (user?.avatar_url) {
+      const avatarPath = resolve(AVATAR_DIR(), user.avatar_url);
+      if (existsSync(avatarPath)) {
+        try { unlinkSync(avatarPath); } catch {}
+      }
+    }
+    db.prepare('UPDATE users SET avatar_url = NULL WHERE id = ?').run(req.user.id);
+    res.json({ ok: true, data: { ok: true } });
+  } catch (err) {
+    console.error('[auth] Avatar delete error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// GET /api/auth/avatar/:filename — serve avatar image
+router.get('/avatar/:filename', (req, res) => {
+  try {
+    const avatarDir = AVATAR_DIR();
+    const filename = req.params.filename.replace(/[^a-zA-Z0-9_.\-]/g, '');
+    const filePath = resolve(avatarDir, filename);
+
+    if (!filePath.startsWith(avatarDir) || !existsSync(filePath)) {
+      return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: '아바타를 찾을 수 없습니다' } });
+    }
+
+    const ext = filename.split('.').pop().toLowerCase();
+    const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+    res.setHeader('Content-Type', mimeMap[ext] || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    createReadStream(filePath).pipe(res);
+  } catch (err) {
+    console.error('[auth] Avatar serve error:', err);
     res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
   }
 });

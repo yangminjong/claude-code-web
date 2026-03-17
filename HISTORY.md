@@ -2,6 +2,51 @@
 
 ---
 
+## 2026-03-17
+
+### 5. [기능] 프로필 아바타 및 Claude 아이콘 개선
+
+채팅 UI에서 유저와 Claude를 명확히 구분할 수 있도록 아바타 시스템 개선.
+
+**유저 프로필 아바타:**
+- DB: `users` 테이블에 `avatar_url` 컬럼 추가 (마이그레이션)
+- 백엔드: 아바타 업로드(`POST /api/auth/avatar`), 삭제(`DELETE /api/auth/avatar`), 서빙(`GET /api/auth/avatar/:filename`) 엔드포인트 추가
+- 아바타 파일은 `avatars/` 디렉토리에 `{userId}_{timestamp}.{ext}` 형식으로 저장
+- 이미지 제한: 2MB, JPEG/PNG/GIF/WebP만 허용
+- 프론트엔드: `UserAvatar.jsx` 컴포넌트 — 프로필 이미지가 있으면 표시, 없으면 이름 첫 글자
+- 설정 페이지에 아바타 미리보기(64px) + 이미지 변경/삭제 버튼 추가
+- 사이드바 하단에 유저 아바타(28px) 표시
+- `authStore`에 `setAvatarUrl` 액션 추가, 로그인/회원가입/me 응답에 `avatarUrl` 포함
+
+**Claude 아이콘:**
+- `ClaudeAvatar.jsx` 컴포넌트 — 공식 Claude 로고 SVG를 주황색(`#da7756`) 배경 위에 흰색으로 렌더링
+- `MessageBubble.jsx`, `ChatWindow.jsx` thinking indicator에 적용
+
+**버그 수정:**
+- 아바타 업로드 시 `renameSync`가 cross-device link 에러 발생 (`/tmp` → `/home` 간 파일시스템 차이)
+- `copyFileSync` + `unlinkSync`로 변경하여 해결
+
+---
+
+### 6. [기능] 멀티 테마 지원
+
+설정에서 테마를 선택할 수 있는 기능 추가.
+
+**테마 목록 (6종):**
+- 다크 (Dark) — 기존 GitHub Dark, 기본값
+- 다크 소프트 (Dimmed) — GitHub Dimmed, 부드러운 다크
+- 라이트 (Light) — 밝은 흰색 배경
+- 솔라라이즈드 (Solarized) — 크림색 배경 Solarized Light
+- 노드 (Nord) — 파란톤 다크 테마
+- 모노카이 (Monokai) — Monokai 에디터 스타일
+
+**구현:**
+- `client/src/stores/themeStore.js` — Zustand 스토어, localStorage 영속화, `:root` CSS 변수 동적 교체
+- `main.jsx`에서 테마 스토어 import하여 페이지 로드 시 즉시 적용
+- 설정 페이지에 테마 카드 그리드 UI (미니 프리뷰 + 선택 하이라이트)
+
+---
+
 ## 2026-03-16
 
 ### 4. [2차] SSH 모드 — SSHFS 아키텍처 전환 및 안정화

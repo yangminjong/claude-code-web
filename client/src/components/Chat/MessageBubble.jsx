@@ -1,5 +1,7 @@
 import React from 'react';
 import CodeBlock from './CodeBlock.jsx';
+import ClaudeAvatar from './ClaudeAvatar.jsx';
+import UserAvatar from './UserAvatar.jsx';
 
 function parseContent(text) {
   const parts = [];
@@ -28,7 +30,7 @@ export default function MessageBubble({ role, content, isStreaming }) {
   return (
     <div className={`message ${role}`}>
       <div className="message-avatar">
-        {role === 'user' ? 'U' : 'C'}
+        {role === 'user' ? <UserAvatar size={32} /> : <ClaudeAvatar size={32} />}
       </div>
       <div className="message-body">
         <div className={`message-bubble ${isStreaming ? 'streaming' : ''}`}>

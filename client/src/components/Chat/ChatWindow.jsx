@@ -3,6 +3,7 @@ import { useSessionStore } from '../../stores/sessionStore.js';
 import { useAuthStore } from '../../stores/authStore.js';
 import { useWebSocket } from '../../hooks/useWebSocket.js';
 import MessageBubble from './MessageBubble.jsx';
+import ClaudeAvatar from './ClaudeAvatar.jsx';
 import toast from 'react-hot-toast';
 import './Chat.css';
 
@@ -123,7 +124,7 @@ export default function ChatWindow() {
         {/* Thinking indicator */}
         {thinking && !streamingText && (
           <div className="message assistant">
-            <div className="message-avatar">C</div>
+            <div className="message-avatar"><ClaudeAvatar size={32} /></div>
             <div className="message-body">
               <div className="thinking-indicator">
                 <span className="dot" /><span className="dot" /><span className="dot" />

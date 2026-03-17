@@ -32,6 +32,24 @@ export const api = {
   logout: () => request('POST', '/auth/logout'),
   me: () => request('GET', '/auth/me'),
   changePassword: (body) => request('PUT', '/auth/password', body),
+  uploadAvatar: async (file) => {
+    const form = new FormData();
+    form.append('avatar', file);
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/auth/avatar`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      const err = new Error(data.error?.message || 'Upload failed');
+      err.code = data.error?.code;
+      throw err;
+    }
+    return data.data;
+  },
+  deleteAvatar: () => request('DELETE', '/auth/avatar'),
 
   // Sessions
   getSessions: () => request('GET', '/sessions'),

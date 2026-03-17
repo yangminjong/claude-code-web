@@ -33,6 +33,12 @@ export function getDb() {
     db.exec("ALTER TABLE ssh_profiles ADD COLUMN remote_os TEXT NOT NULL DEFAULT 'linux' CHECK(remote_os IN ('linux', 'windows'))");
   }
 
+  // Add avatar_url column to users table
+  const userCols = db.pragma('table_info(users)').map(c => c.name);
+  if (!userCols.includes('avatar_url')) {
+    db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
+  }
+
   return db;
 }
 

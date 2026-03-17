@@ -1,23 +1,59 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../hooks/useAuth.js';
+import { useAuthStore } from '../../stores/authStore.js';
+import { useThemeStore, themes } from '../../stores/themeStore.js';
 import { useSshProfileStore } from '../../stores/sshProfileStore.js';
 import { api } from '../../api/client.js';
 import SshProfileForm from './SshProfileForm.jsx';
+import UserAvatar from '../Chat/UserAvatar.jsx';
 import toast from 'react-hot-toast';
 import './Settings.css';
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const setAvatarUrl = useAuthStore((s) => s.setAvatarUrl);
+  const { theme, setTheme } = useThemeStore();
   const { profiles, fetchProfiles, deleteProfile } = useSshProfileStore();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [avatarLoading, setAvatarLoading] = useState(false);
   const [showSshForm, setShowSshForm] = useState(false);
   const [editingProfile, setEditingProfile] = useState(null);
+  const avatarInputRef = useRef(null);
 
   useEffect(() => {
     fetchProfiles();
   }, [fetchProfiles]);
+
+  const handleAvatarUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarLoading(true);
+    try {
+      const { avatarUrl } = await api.uploadAvatar(file);
+      setAvatarUrl(avatarUrl);
+      toast.success('프로필 이미지가 변경되었습니다');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setAvatarLoading(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+    }
+  };
+
+  const handleAvatarDelete = async () => {
+    setAvatarLoading(true);
+    try {
+      await api.deleteAvatar();
+      setAvatarUrl(null);
+      toast.success('프로필 이미지가 삭제되었습니다');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setAvatarLoading(false);
+    }
+  };
 
   const handlePasswordChange = async (e) => {
     e.preventDefault();
@@ -54,6 +90,34 @@ export default function SettingsPage() {
 
       <section className="settings-section">
         <h3>프로필</h3>
+        <div className="settings-avatar-section">
+          <UserAvatar size={64} />
+          <div className="settings-avatar-actions">
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              onChange={handleAvatarUpload}
+              style={{ display: 'none' }}
+            />
+            <button
+              className="btn btn-sm btn-secondary"
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={avatarLoading}
+            >
+              {avatarLoading ? '업로드 중...' : '이미지 변경'}
+            </button>
+            {user?.avatarUrl && (
+              <button
+                className="btn btn-sm btn-danger"
+                onClick={handleAvatarDelete}
+                disabled={avatarLoading}
+              >
+                삭제
+              </button>
+            )}
+          </div>
+        </div>
         <div className="settings-info">
           <div className="settings-row">
             <span className="settings-label">이름</span>
@@ -63,6 +127,28 @@ export default function SettingsPage() {
             <span className="settings-label">이메일</span>
             <span>{user?.email}</span>
           </div>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h3>테마</h3>
+        <div className="theme-grid">
+          {Object.entries(themes).map(([id, t]) => (
+            <button
+              key={id}
+              className={`theme-card ${theme === id ? 'active' : ''}`}
+              onClick={() => setTheme(id)}
+            >
+              <div className="theme-preview">
+                <div className="theme-preview-sidebar" style={{ background: t.vars['--bg-secondary'] }} />
+                <div className="theme-preview-main" style={{ background: t.vars['--bg-primary'] }}>
+                  <div className="theme-preview-msg" style={{ background: t.vars['--bg-secondary'], borderColor: t.vars['--border'] }} />
+                  <div className="theme-preview-accent" style={{ background: t.vars['--accent'] }} />
+                </div>
+              </div>
+              <span className="theme-name">{t.label}</span>
+            </button>
+          ))}
         </div>
       </section>
 

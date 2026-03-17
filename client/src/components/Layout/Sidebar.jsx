@@ -4,6 +4,7 @@ import { useAuth } from '../../hooks/useAuth.js';
 import { useSessionStore } from '../../stores/sessionStore.js';
 import SessionList from '../Session/SessionList.jsx';
 import NewSessionModal from '../Session/NewSessionModal.jsx';
+import UserAvatar from '../Chat/UserAvatar.jsx';
 
 export default function Sidebar({ open, onToggle }) {
   const { user, logout } = useAuth();
@@ -52,6 +53,7 @@ export default function Sidebar({ open, onToggle }) {
             </nav>
 
             <div className="sidebar-footer">
+              <UserAvatar size={28} />
               <div className="user-info">
                 <span className="user-name">{user?.displayName}</span>
                 <span className="user-email">{user?.email}</span>

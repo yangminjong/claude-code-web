@@ -7,6 +7,8 @@
 }
 
 :root {
+  /* Color vars are set dynamically by themeStore.js */
+  /* Fallback defaults (dark theme) */
   --bg-primary: #0d1117;
   --bg-secondary: #161b22;
   --bg-tertiary: #21262d;
@@ -26,6 +28,7 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
   --radius: 8px;
   --radius-lg: 12px;
+  --radius-md: 6px;
   --sidebar-width: 280px;
 }
 

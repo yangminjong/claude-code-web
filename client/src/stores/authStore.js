@@ -37,5 +37,9 @@ export const useAuthStore = create((set) => ({
     try { await api.logout(); } catch {}
     localStorage.removeItem('token');
     set({ user: null, token: null });
+  },
+
+  setAvatarUrl: (avatarUrl) => {
+    set((state) => ({ user: { ...state.user, avatarUrl } }));
   }
 }));

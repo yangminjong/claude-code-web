@@ -65,6 +65,10 @@ export const api = {
 
   // Files
   listFiles: (path = '.') => request('GET', `/files?path=${encodeURIComponent(path)}`),
+  createFile: (path) => request('POST', '/files/create', { path }),
+  createDir: (path) => request('POST', '/files/mkdir', { path }),
+  renameFile: (oldPath, newPath) => request('POST', '/files/rename', { oldPath, newPath }),
+  deleteFile: (path) => request('DELETE', `/files?path=${encodeURIComponent(path)}`),
   uploadFile: async (file, path = '.') => {
     const form = new FormData();
     form.append('file', file);
@@ -84,13 +88,18 @@ export const api = {
     }
     return data.data;
   },
-  downloadFile: (path) => {
+  downloadFile: async (path) => {
     const token = getToken();
     const url = `${API_BASE}/files/download?path=${encodeURIComponent(path)}`;
-    // Return a URL with auth for download
-    return fetch(url, {
+    const res = await fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {}
-    }).then(res => res.blob());
+    });
+    if (!res.ok) {
+      let msg = 'Download failed';
+      try { const data = await res.json(); msg = data.error?.message || msg; } catch {}
+      throw new Error(msg);
+    }
+    return res.blob();
   },
 
   // SSH Profiles

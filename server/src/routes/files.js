@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { resolve } from 'path';
-import { readdirSync, statSync, createReadStream, mkdirSync, renameSync } from 'fs';
+import { resolve, basename } from 'path';
+import { readdirSync, statSync, createReadStream, mkdirSync, renameSync, writeFileSync, rmSync, existsSync, copyFileSync, unlinkSync } from 'fs';
 import multer from 'multer';
 import { authenticate } from '../middleware/authenticate.js';
 import { pathGuard } from '../middleware/pathGuard.js';
@@ -72,15 +72,19 @@ router.post('/upload', authenticate, upload.single('file'), (req, res) => {
     const resolvedDir = validatePath(userRoot, targetDir);
     mkdirSync(resolvedDir, { recursive: true });
 
-    const targetPath = resolve(resolvedDir, req.file.originalname);
-    // Validate final path is still within userRoot
-    validatePath(userRoot, targetDir + '/' + req.file.originalname);
+    // multer는 originalname을 latin1로 디코딩하므로 UTF-8로 복원
+    const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
 
-    // Move file from temp to target
-    renameSync(req.file.path, targetPath);
+    const targetPath = resolve(resolvedDir, originalName);
+    // Validate final path is still within userRoot
+    validatePath(userRoot, targetDir + '/' + originalName);
+
+    // Move file from temp to target (copyFileSync + unlinkSync to avoid EXDEV cross-device error)
+    copyFileSync(req.file.path, targetPath);
+    unlinkSync(req.file.path);
 
     auditLog(req.user.id, 'file_upload', {
-      filename: req.file.originalname,
+      filename: originalName,
       size: req.file.size,
       path: targetDir
     }, req.ip);
@@ -89,7 +93,7 @@ router.post('/upload', authenticate, upload.single('file'), (req, res) => {
       ok: true,
       data: {
         file: {
-          name: req.file.originalname,
+          name: originalName,
           size: req.file.size,
           path: targetDir
         }
@@ -136,7 +140,9 @@ router.get('/download', authenticate, (req, res) => {
       size: stat.size
     }, req.ip);
 
-    res.setHeader('Content-Disposition', `attachment; filename="${requestedPath.split('/').pop()}"`);
+    const fileName = requestedPath.split('/').pop();
+    const encodedName = encodeURIComponent(fileName);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedName}`);
     createReadStream(resolvedPath).pipe(res);
   } catch (err) {
     if (err.code === 'PATH_TRAVERSAL_DENIED') {
@@ -149,6 +155,158 @@ router.get('/download', authenticate, (req, res) => {
       });
     }
     console.error('[files] Download error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// POST /api/files/mkdir — create directory
+router.post('/mkdir', authenticate, (req, res) => {
+  try {
+    const userRoot = getUserRoot(req.user);
+    const { path: dirPath } = req.body;
+    if (!dirPath) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '경로가 필요합니다' }
+      });
+    }
+
+    const resolvedPath = validatePath(userRoot, dirPath);
+    if (existsSync(resolvedPath)) {
+      return res.status(409).json({
+        ok: false,
+        error: { code: 'ALREADY_EXISTS', message: '이미 존재하는 경로입니다' }
+      });
+    }
+
+    mkdirSync(resolvedPath, { recursive: true });
+
+    auditLog(req.user.id, 'file_create', { type: 'directory', path: dirPath }, req.ip);
+
+    res.json({ ok: true, data: { path: dirPath } });
+  } catch (err) {
+    if (err.code === 'PATH_TRAVERSAL_DENIED') {
+      return res.status(403).json({ ok: false, error: { code: err.code, message: err.message } });
+    }
+    console.error('[files] Mkdir error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// POST /api/files/create — create empty file
+router.post('/create', authenticate, (req, res) => {
+  try {
+    const userRoot = getUserRoot(req.user);
+    const { path: filePath } = req.body;
+    if (!filePath) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '경로가 필요합니다' }
+      });
+    }
+
+    const resolvedPath = validatePath(userRoot, filePath);
+    if (existsSync(resolvedPath)) {
+      return res.status(409).json({
+        ok: false,
+        error: { code: 'ALREADY_EXISTS', message: '이미 존재하는 파일입니다' }
+      });
+    }
+
+    // 부모 디렉토리 생성
+    const parentDir = resolve(resolvedPath, '..');
+    mkdirSync(parentDir, { recursive: true });
+    writeFileSync(resolvedPath, '', 'utf8');
+
+    auditLog(req.user.id, 'file_create', { type: 'file', path: filePath }, req.ip);
+
+    res.json({ ok: true, data: { path: filePath } });
+  } catch (err) {
+    if (err.code === 'PATH_TRAVERSAL_DENIED') {
+      return res.status(403).json({ ok: false, error: { code: err.code, message: err.message } });
+    }
+    console.error('[files] Create error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// POST /api/files/rename — rename file or directory
+router.post('/rename', authenticate, (req, res) => {
+  try {
+    const userRoot = getUserRoot(req.user);
+    const { oldPath, newPath } = req.body;
+    if (!oldPath || !newPath) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: 'oldPath, newPath가 필요합니다' }
+      });
+    }
+
+    const resolvedOld = validatePath(userRoot, oldPath);
+    const resolvedNew = validatePath(userRoot, newPath);
+
+    if (!existsSync(resolvedOld)) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: 'NOT_FOUND', message: '파일을 찾을 수 없습니다' }
+      });
+    }
+
+    if (existsSync(resolvedNew)) {
+      return res.status(409).json({
+        ok: false,
+        error: { code: 'ALREADY_EXISTS', message: '대상 경로가 이미 존재합니다' }
+      });
+    }
+
+    renameSync(resolvedOld, resolvedNew);
+
+    auditLog(req.user.id, 'file_rename', { oldPath, newPath }, req.ip);
+
+    res.json({ ok: true, data: { oldPath, newPath } });
+  } catch (err) {
+    if (err.code === 'PATH_TRAVERSAL_DENIED') {
+      return res.status(403).json({ ok: false, error: { code: err.code, message: err.message } });
+    }
+    console.error('[files] Rename error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// DELETE /api/files — delete file or directory
+router.delete('/', authenticate, (req, res) => {
+  try {
+    const userRoot = getUserRoot(req.user);
+    const filePath = req.query.path;
+    if (!filePath) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: 'path 파라미터가 필요합니다' }
+      });
+    }
+
+    const resolvedPath = validatePath(userRoot, filePath);
+    if (!existsSync(resolvedPath)) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: 'NOT_FOUND', message: '파일을 찾을 수 없습니다' }
+      });
+    }
+
+    const stat = statSync(resolvedPath);
+    rmSync(resolvedPath, { recursive: true, force: true });
+
+    auditLog(req.user.id, 'file_delete', {
+      type: stat.isDirectory() ? 'directory' : 'file',
+      path: filePath
+    }, req.ip);
+
+    res.json({ ok: true, data: { path: filePath } });
+  } catch (err) {
+    if (err.code === 'PATH_TRAVERSAL_DENIED') {
+      return res.status(403).json({ ok: false, error: { code: err.code, message: err.message } });
+    }
+    console.error('[files] Delete error:', err);
     res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
   }
 });

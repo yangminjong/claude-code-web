@@ -2,6 +2,33 @@
 
 ---
 
+## 2026-03-23
+
+### 8. [v2.7.1] VS Code 스타일 파일 익스플로러
+
+기존 `/files` 라우트 기반 파일 탐색기를 VS Code 스타일 오른쪽 패널 트리 뷰로 전환.
+
+**구현 내용:**
+- 오른쪽 패널: 메인 콘텐츠 오른쪽에 고정되는 Explorer 패널
+- 트리 뷰: 폴더 클릭 시 온디맨드 디렉토리 로딩, 재귀적 확장/접기
+- 파일 아이콘: 확장자별 아이콘과 색상 (JS, JSX, TS, CSS, HTML, PY, SQL, MD 등)
+- 리사이즈: 왼쪽 드래그 핸들로 패널 너비 조절 (200~600px)
+- VS Code 스타일 UI: EXPLORER 헤더, WORKSPACE 섹션 헤더, 22px 트리 노드
+- 사이드바 통합: '파일 탐색기' 버튼이 라우트 이동 대신 패널 토글
+- Zustand 스토어: 트리 상태, 확장 경로, 로딩, 패널 너비 관리
+
+**새 파일:**
+- `client/src/stores/explorerStore.js` — Explorer 상태 관리
+- `client/src/components/Explorer/ExplorerPanel.jsx` — 패널 컴포넌트
+- `client/src/components/Explorer/ExplorerTree.jsx` — 트리 뷰 컴포넌트
+- `client/src/components/Explorer/Explorer.css` — VS Code 스타일 CSS
+
+**변경 파일:**
+- `client/src/components/Layout/AppShell.jsx` — ExplorerPanel 추가, /files 라우트 제거
+- `client/src/components/Layout/Sidebar.jsx` — 파일 탐색기 토글로 변경
+
+---
+
 ## 2026-03-17
 
 ### 5. [기능] 프로필 아바타 및 Claude 아이콘 개선

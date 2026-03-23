@@ -1,0 +1,380 @@
+/* ── Explorer Panel ── */
+.explorer-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Collapsed State ── */
+.explorer-panel.explorer-collapsed {
+  width: 36px;
+  border-left: 1px solid var(--border);
+}
+
+.explorer-collapsed-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 0;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.explorer-collapsed-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.explorer-collapsed-label {
+  writing-mode: vertical-rl;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+}
+
+/* ── Resize Handle ── */
+.explorer-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+
+.explorer-resize-handle:hover,
+.explorer-resize-handle:active {
+  background: var(--accent);
+}
+
+/* ── Header ── */
+.explorer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 8px 16px;
+  min-height: 35px;
+  flex-shrink: 0;
+}
+
+.explorer-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.explorer-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.explorer-actions .btn {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.explorer-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.explorer-action-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Section Header ── */
+.explorer-section-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.explorer-section-header svg {
+  transition: transform 0.15s;
+  color: var(--text-secondary);
+}
+
+.explorer-section-header svg.expanded {
+  transform: rotate(90deg);
+}
+
+/* ── Tree Container ── */
+.explorer-tree-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+}
+
+.explorer-tree {
+  padding: 2px 0;
+  min-height: 100%;
+}
+
+/* ── Tree Node ── */
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding-right: 12px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-primary);
+  transition: background 0.08s;
+}
+
+.tree-node:hover {
+  background: var(--bg-hover);
+}
+
+.tree-node.selected {
+  background: var(--bg-tertiary);
+}
+
+.tree-node.selected:hover {
+  background: var(--bg-tertiary);
+}
+
+/* ── Chevron ── */
+.tree-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.tree-chevron:not(.visible) {
+  visibility: hidden;
+}
+
+.tree-chevron svg {
+  transition: transform 0.15s;
+}
+
+.tree-chevron svg.expanded {
+  transform: rotate(90deg);
+}
+
+/* ── Spinner ── */
+.tree-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--text-muted);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tree-spin 0.6s linear infinite;
+}
+
+@keyframes tree-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── File/Folder Icon ── */
+.tree-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.tree-icon svg {
+  opacity: 0.85;
+}
+
+.tree-icon-label {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  line-height: 1;
+}
+
+/* ── File Name ── */
+.tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Empty / Loading ── */
+.tree-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  height: 22px;
+  display: flex;
+  align-items: center;
+}
+
+.tree-empty-root {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.tree-loading {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── Inline Name Input ── */
+.tree-name-input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  padding: 0 4px;
+  height: 18px;
+  border-radius: 2px;
+  outline: none;
+  min-width: 0;
+}
+
+.tree-inline-input {
+  height: 22px;
+}
+
+/* ── Context Menu ── */
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px 0;
+  min-width: 180px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-menu-item:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.context-menu-item.danger {
+  color: var(--danger);
+}
+
+.context-menu-item.danger:hover {
+  background: var(--danger);
+  color: white;
+}
+
+.context-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ── Drop Overlay ── */
+.explorer-drop-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(88, 166, 255, 0.08);
+  border: 2px dashed var(--accent);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.explorer-drop-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* 드래그 가능한 파일 커서 */
+.tree-node[draggable="true"] {
+  cursor: grab;
+}
+
+.tree-node[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+/* ── Scrollbar (Explorer) ── */
+.explorer-tree-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.explorer-tree-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.explorer-tree-container::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: 3px;
+}
+
+.explorer-tree-container::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

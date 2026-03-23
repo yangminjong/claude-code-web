@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.js';
 import { useSessionStore } from '../../stores/sessionStore.js';
+import { useExplorerStore } from '../../stores/explorerStore.js';
 import SessionList from '../Session/SessionList.jsx';
 import CliSessionList from '../Session/CliSessionList.jsx';
 import NewSessionModal from '../Session/NewSessionModal.jsx';
@@ -12,6 +13,7 @@ export default function Sidebar({ open, onToggle, sidebarTab, onSidebarTabChange
   const navigate = useNavigate();
   const location = useLocation();
   const { fetchSessions } = useSessionStore();
+  const { open: explorerOpen, toggleOpen: toggleExplorer } = useExplorerStore();
   const [showNewSession, setShowNewSession] = useState(false);
   const [tab, setTab] = useState(sidebarTab || 'mine');
 
@@ -68,8 +70,8 @@ export default function Sidebar({ open, onToggle, sidebarTab, onSidebarTabChange
 
             <nav className="sidebar-nav">
               <button
-                className={`nav-item ${location.pathname === '/files' ? 'active' : ''}`}
-                onClick={() => navigate('/files')}
+                className={`nav-item ${explorerOpen ? 'active' : ''}`}
+                onClick={toggleExplorer}
               >
                 파일 탐색기
               </button>

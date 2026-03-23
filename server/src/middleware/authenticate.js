@@ -3,7 +3,9 @@ import { getDb } from '../db/connection.js';
 
 export function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const queryToken = req.query.token;
+
+  if (!authHeader?.startsWith('Bearer ') && !queryToken) {
     console.log('[auth] FAIL: no token for', req.method, req.path);
     return res.status(401).json({
       ok: false,
@@ -12,7 +14,7 @@ export function authenticate(req, res, next) {
   }
 
   try {
-    const token = authHeader.slice(7);
+    const token = authHeader ? authHeader.slice(7) : queryToken;
     const payload = verifyToken(token);
     const user = getDb().prepare('SELECT id, email, display_name FROM users WHERE id = ?').get(payload.userId);
     if (!user) {

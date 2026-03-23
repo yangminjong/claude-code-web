@@ -10,9 +10,9 @@ const STATUS_COLORS = {
 };
 
 export default function SessionItem({ session, active, onClick }) {
-  const { deleteSession } = useSessionStore();
+  const { deleteSession, deleteSessionPermanently } = useSessionStore();
 
-  const handleDelete = async (e) => {
+  const handleEnd = async (e) => {
     e.stopPropagation();
     try {
       await deleteSession(session.id);
@@ -21,6 +21,20 @@ export default function SessionItem({ session, active, onClick }) {
       toast.error(err.message);
     }
   };
+
+  const handleDelete = async (e) => {
+    e.stopPropagation();
+    if (!confirm('이 세션을 영구 삭제하시겠습니까?')) return;
+    try {
+      await deleteSessionPermanently(session.id);
+      toast.success('세션이 삭제되었습니다');
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const isActive = session.status === 'active' || session.status === 'idle';
+  const isEnded = session.status === 'ended' || session.status === 'error';
 
   return (
     <div className={`session-item ${active ? 'active' : ''}`} onClick={onClick}>
@@ -34,11 +48,18 @@ export default function SessionItem({ session, active, onClick }) {
           {session.name}
         </span>
       </div>
-      {(session.status === 'active' || session.status === 'idle') && (
-        <button className="session-item-close" onClick={handleDelete} title="세션 종료">
-          &times;
-        </button>
-      )}
+      <div className="session-item-actions">
+        {isActive && (
+          <button className="session-item-close" onClick={handleEnd} title="세션 종료">
+            &times;
+          </button>
+        )}
+        {isEnded && (
+          <button className="session-item-delete" onClick={handleDelete} title="세션 삭제">
+            &times;
+          </button>
+        )}
+      </div>
     </div>
   );
 }

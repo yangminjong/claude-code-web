@@ -1,21 +1,34 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.js';
 import { useSessionStore } from '../../stores/sessionStore.js';
 import SessionList from '../Session/SessionList.jsx';
+import CliSessionList from '../Session/CliSessionList.jsx';
 import NewSessionModal from '../Session/NewSessionModal.jsx';
 import UserAvatar from '../Chat/UserAvatar.jsx';
 
-export default function Sidebar({ open, onToggle }) {
+export default function Sidebar({ open, onToggle, sidebarTab, onSidebarTabChange }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { fetchSessions } = useSessionStore();
   const [showNewSession, setShowNewSession] = useState(false);
+  const [tab, setTab] = useState(sidebarTab || 'mine');
 
   useEffect(() => {
     fetchSessions();
   }, []);
+
+  useEffect(() => {
+    if (sidebarTab && sidebarTab !== tab) {
+      setTab(sidebarTab);
+    }
+  }, [sidebarTab]);
+
+  const handleTabChange = useCallback((newTab) => {
+    setTab(newTab);
+    if (onSidebarTabChange) onSidebarTabChange(newTab);
+  }, [onSidebarTabChange]);
 
   return (
     <>
@@ -35,7 +48,23 @@ export default function Sidebar({ open, onToggle }) {
               </button>
             </div>
 
-            <SessionList />
+            <div className="sidebar-tabs">
+              <button
+                className={`sidebar-tab-btn ${tab === 'mine' ? 'active' : ''}`}
+                onClick={() => handleTabChange('mine')}
+              >
+                내 세션
+              </button>
+              <button
+                className={`sidebar-tab-btn ${tab === 'cli' ? 'active' : ''}`}
+                onClick={() => handleTabChange('cli')}
+              >
+                CLI 히스토리
+              </button>
+            </div>
+
+            {tab === 'mine' && <SessionList />}
+            {tab === 'cli' && <CliSessionList />}
 
             <nav className="sidebar-nav">
               <button

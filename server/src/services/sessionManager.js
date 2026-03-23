@@ -1,9 +1,11 @@
 import { resolve } from 'path';
-import { mkdirSync } from 'fs';
+import { mkdirSync, statSync } from 'fs';
+import { execSync } from 'child_process';
 import { getDb } from '../db/connection.js';
 import { cleanupSession, cancelProcess } from './processManager.js';
 import { auditLog } from './auditLogger.js';
 import { getProfile, validateRemotePath } from './sshProfileManager.js';
+import { deleteClaudeCliSession } from '../utils/claudeSessionCleaner.js';
 
 const WORKSPACE_ROOT = () => resolve(process.env.WORKSPACE_ROOT || '../workspace');
 const MAX_SESSIONS = () => parseInt(process.env.MAX_SESSIONS_PER_USER || '3', 10);
@@ -109,6 +111,42 @@ export function getSessionMessages(sessionId, { page = 1, limit = 50 } = {}) {
   return { messages, total };
 }
 
+export function updateSessionName(sessionId, name) {
+  getDb().prepare('UPDATE sessions SET name = ? WHERE id = ?').run(name, sessionId);
+}
+
+export function updateClaudeSessionId(sessionId, claudeSessionId) {
+  getDb().prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(claudeSessionId, sessionId);
+}
+
+export function resumeSession(sessionId, userId) {
+  const db = getDb();
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
+  if (!session) return null;
+  if (session.user_id !== userId) return null;
+
+  // Check session limit
+  const activeCount = db.prepare(
+    "SELECT COUNT(*) as count FROM sessions WHERE user_id = ? AND status IN ('active', 'idle')"
+  ).get(userId).count;
+
+  if (activeCount >= MAX_SESSIONS()) {
+    const err = new Error(`최대 동시 세션 수(${MAX_SESSIONS()})를 초과했습니다`);
+    err.code = 'SESSION_LIMIT_EXCEEDED';
+    err.status = 429;
+    throw err;
+  }
+
+  // Reactivate
+  db.prepare(
+    "UPDATE sessions SET status = 'active', ended_at = NULL, last_activity_at = CURRENT_TIMESTAMP WHERE id = ?"
+  ).run(sessionId);
+
+  auditLog(userId, 'session_resume', { sessionId });
+
+  return db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
+}
+
 export function addMessage(sessionId, role, content) {
   const db = getDb();
   const last = db.prepare(
@@ -122,6 +160,76 @@ export function addMessage(sessionId, role, content) {
 
   // Update session last_activity
   db.prepare('UPDATE sessions SET last_activity_at = CURRENT_TIMESTAMP WHERE id = ?').run(sessionId);
+}
+
+export function deleteSessionPermanently(sessionId, userId) {
+  const db = getDb();
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
+  if (!session || session.user_id !== userId) return null;
+
+  cleanupSession(sessionId);
+
+  // Delete Claude CLI session files if claude_session_id exists
+  if (session.claude_session_id) {
+    try { deleteClaudeCliSession(session.claude_session_id); } catch {}
+  }
+
+  db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+  db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+
+  auditLog(userId, 'session_delete', { sessionId });
+  return session;
+}
+
+export function getSessionMetadata(sessionId) {
+  const db = getDb();
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
+  if (!session) return null;
+
+  // Calculate message content size
+  const sizeResult = db.prepare(
+    'SELECT COALESCE(SUM(LENGTH(content)), 0) as totalBytes, COUNT(*) as messageCount FROM messages WHERE session_id = ?'
+  ).get(sessionId);
+
+  // Check JSONL file size if claude_session_id exists
+  let jsonlSizeBytes = 0;
+  if (session.claude_session_id) {
+    try {
+      const cwdEncoded = session.project_path.replace(/\//g, '-');
+      const homeDir = process.env.HOME || '/home/' + (process.env.USER || 'root');
+      const jsonlPath = resolve(homeDir, '.claude/projects', cwdEncoded, `${session.claude_session_id}.jsonl`);
+      const stat = statSync(jsonlPath);
+      jsonlSizeBytes = stat.size;
+    } catch {}
+  }
+
+  // Get git info from project_path
+  let gitInfo = null;
+  if (session.work_mode === 'server' && session.project_path) {
+    try {
+      const remote = execSync('git remote get-url origin 2>/dev/null', {
+        cwd: session.project_path, timeout: 3000, stdio: 'pipe'
+      }).toString().trim();
+      const branch = execSync('git branch --show-current 2>/dev/null', {
+        cwd: session.project_path, timeout: 3000, stdio: 'pipe'
+      }).toString().trim();
+      gitInfo = { remote, branch };
+    } catch {}
+  }
+
+  // Time since last activity
+  const lastActivityAt = session.last_activity_at;
+
+  return {
+    messageSizeBytes: sizeResult.totalBytes,
+    messageCount: sizeResult.messageCount,
+    sessionSizeBytes: jsonlSizeBytes,
+    gitInfo,
+    lastActivityAt,
+    projectPath: session.project_path,
+    workMode: session.work_mode,
+    claudeSessionId: session.claude_session_id
+  };
 }
 
 // Idle timeout checker — marks inactive sessions as ended

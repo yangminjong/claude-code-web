@@ -14,6 +14,7 @@ import sessionRoutes from './routes/sessions.js';
 import fileRoutes from './routes/files.js';
 import logRoutes from './routes/logs.js';
 import sshProfileRoutes from './routes/sshProfiles.js';
+import cliSessionRoutes from './routes/cliSessions.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -23,12 +24,21 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 app.use(cors());
 app.use(express.json());
 
+// Request logger
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    console.log(`[req] ${req.method} ${req.path}`);
+  }
+  next();
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/logs', logRoutes);
 app.use('/api/ssh-profiles', sshProfileRoutes);
+app.use('/api/cli-sessions', cliSessionRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -38,9 +48,18 @@ app.get('/api/health', (req, res) => {
 // Serve static client build in production
 const clientDist = resolve(__dirname, '../../client/dist');
 if (existsSync(clientDist)) {
-  app.use(express.static(clientDist));
+  app.use(express.static(clientDist, {
+    etag: false,
+    maxAge: 0,
+    setHeaders: (res, path) => {
+      if (path.endsWith('.html')) {
+        res.set('Cache-Control', 'no-store');
+      }
+    }
+  }));
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api') && !req.path.startsWith('/ws')) {
+      res.set('Cache-Control', 'no-store');
       res.sendFile(join(clientDist, 'index.html'));
     }
   });

@@ -2,7 +2,8 @@ import {
   sendMessage, sendMessageSSH, getClaudeSessionId, setClaudeSessionId,
   isProcessBusy, cancelProcess
 } from '../services/processManager.js';
-import { addMessage, getSession } from '../services/sessionManager.js';
+import { addMessage, getSession, updateSessionName, updateClaudeSessionId } from '../services/sessionManager.js';
+import { getDb } from '../db/connection.js';
 import { auditLog } from '../services/auditLogger.js';
 import { getProfileWithCredential, updateLastConnected } from '../services/sshProfileManager.js';
 
@@ -47,10 +48,12 @@ export function handleConnection(ws, userId, sessionId) {
     return;
   }
 
-  if (session.status === 'ended' || session.status === 'error') {
-    ws.send(JSON.stringify({ type: 'error', message: '이미 종료된 세션입니다' }));
-    ws.close();
-    return;
+  // Allow connecting to ended/error sessions (for resume)
+  // The actual resume happens via POST /api/sessions/:id/resume before WS connect
+
+  // Restore claude_session_id from DB to memory (for resumed sessions)
+  if (session.claude_session_id && !getClaudeSessionId(sessionId)) {
+    setClaudeSessionId(sessionId, session.claude_session_id);
   }
 
   // Heartbeat
@@ -112,13 +115,24 @@ function handleUserMessage(ws, sessionId, session, content) {
     return;
   }
 
+  // Auto-rename session on first message (if still "새 채팅")
+  if (session.name === '새 채팅') {
+    const autoName = content.length > 30 ? content.substring(0, 30) + '...' : content;
+    updateSessionName(sessionId, autoName);
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'session_renamed', name: autoName }));
+    }
+  }
+
   // Save user message to DB
   addMessage(sessionId, 'user', content);
 
   // Notify client that assistant is thinking
   ws.send(JSON.stringify({ type: 'assistant_start' }));
 
-  const claudeSessionId = getClaudeSessionId(sessionId);
+  // Use DB-persisted claude_session_id first, fall back to in-memory
+  const dbSession = getSession(sessionId);
+  const claudeSessionId = getClaudeSessionId(sessionId) || dbSession?.claude_session_id || null;
 
   let proc;
   try {
@@ -203,6 +217,7 @@ function handleUserMessage(ws, sessionId, session, content) {
         const sid = extractSessionId(obj);
         if (sid) {
           setClaudeSessionId(sessionId, sid);
+          updateClaudeSessionId(sessionId, sid);
           capturedSessionId = true;
         }
       }

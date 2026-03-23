@@ -1,12 +1,22 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSessionStore } from '../../stores/sessionStore.js';
 import SessionItem from './SessionItem.jsx';
 import './Session.css';
 
 export default function SessionList() {
-  const { sessions, activeSessionId, setActiveSession } = useSessionStore();
+  const { sessions, activeSessionId, setActiveSession, fetchSessions } = useSessionStore();
   const navigate = useNavigate();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([
+      fetchSessions(),
+      new Promise(r => setTimeout(r, 600))
+    ]);
+    setRefreshing(false);
+  }, [fetchSessions]);
 
   const handleSelect = (id) => {
     setActiveSession(id);
@@ -18,6 +28,9 @@ export default function SessionList() {
 
   return (
     <div className="session-list">
+      <div className="session-list-header">
+        <button className={`cli-refresh-btn ${refreshing ? 'spinning' : ''}`} onClick={handleRefresh} disabled={refreshing} title="새로고침">&#x21bb;</button>
+      </div>
       {activeSessions.length > 0 && (
         <div className="session-group">
           <div className="session-group-label">활성 세션</div>

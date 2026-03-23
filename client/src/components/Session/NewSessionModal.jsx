@@ -56,14 +56,13 @@ export default function NewSessionModal({ onClose }) {
         </div>
         <form onSubmit={handleSubmit} className="modal-body">
           <div className="form-group">
-            <label htmlFor="sessionName">세션 이름</label>
+            <label htmlFor="sessionName">세션 이름 <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>(선택)</span></label>
             <input
               id="sessionName"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="예: 프로젝트 리팩토링"
-              required
+              placeholder="비워두면 첫 메시지로 자동 설정됩니다"
               autoFocus
             />
           </div>

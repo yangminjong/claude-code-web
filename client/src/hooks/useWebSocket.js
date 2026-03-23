@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { useSessionStore } from '../stores/sessionStore.js';
 
 export function useWebSocket(sessionId, token) {
   const wsRef = useRef(null);
@@ -7,6 +8,8 @@ export function useWebSocket(sessionId, token) {
   const [thinking, setThinking] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const onCompleteRef = useRef(null);
+
+  const renameSession = useSessionStore((s) => s.renameSession);
 
   useEffect(() => {
     if (!sessionId || !token) return;
@@ -54,6 +57,9 @@ export function useWebSocket(sessionId, token) {
           case 'error':
             setThinking(false);
             onCompleteRef.current?.({ error: msg.message });
+            break;
+          case 'session_renamed':
+            renameSession(sessionId, msg.name);
             break;
           case 'heartbeat_ack':
             break;

@@ -44,6 +44,37 @@ export const useSessionStore = create((set, get) => ({
     }));
   },
 
+  deleteSessionPermanently: async (id) => {
+    // End session first if active, then permanently delete on server
+    try { await api.deleteSession(id); } catch {}
+    await api.deleteSessionPermanently(id);
+    // Remove from UI after server confirms deletion
+    set((s) => ({
+      sessions: s.sessions.filter(sess => sess.id !== id),
+      activeSessionId: s.activeSessionId === id ? null : s.activeSessionId,
+      messages: s.activeSessionId === id ? [] : s.messages
+    }));
+  },
+
+  resumeSession: async (id) => {
+    const { session } = await api.resumeSession(id);
+    set((s) => ({
+      sessions: s.sessions.map(sess =>
+        sess.id === id ? session : sess
+      ),
+      activeSessionId: id
+    }));
+    return session;
+  },
+
+  renameSession: (id, name) => {
+    set((s) => ({
+      sessions: s.sessions.map(sess =>
+        sess.id === id ? { ...sess, name } : sess
+      )
+    }));
+  },
+
   addMessage: (msg) => {
     set((s) => ({ messages: [...s.messages, msg] }));
   },

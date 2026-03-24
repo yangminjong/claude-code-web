@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { api } from '../api/client.js';
 
 export const themes = {
   dark: {
@@ -129,25 +130,61 @@ export const themes = {
   },
 };
 
-function applyTheme(themeId) {
-  const theme = themes[themeId];
-  if (!theme) return;
+const DEFAULT_THEME = 'dark';
+const THEME_STORAGE_KEY = 'theme';
+
+function normalizeTheme(themeId) {
+  return themes[themeId] ? themeId : DEFAULT_THEME;
+}
+
+export function applyTheme(themeId) {
+  const normalizedTheme = normalizeTheme(themeId);
+  const theme = themes[normalizedTheme];
   const root = document.documentElement;
   for (const [prop, value] of Object.entries(theme.vars)) {
     root.style.setProperty(prop, value);
   }
+  return normalizedTheme;
 }
 
-const savedTheme = localStorage.getItem('theme') || 'dark';
+function persistTheme(themeId) {
+  localStorage.setItem(THEME_STORAGE_KEY, themeId);
+}
+
+const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORAGE_KEY));
 applyTheme(savedTheme);
 
-export const useThemeStore = create((set) => ({
+export const useThemeStore = create((set, get) => ({
   theme: savedTheme,
 
-  setTheme: (themeId) => {
-    if (!themes[themeId]) return;
-    localStorage.setItem('theme', themeId);
-    applyTheme(themeId);
-    set({ theme: themeId });
+  syncTheme: (themeId) => {
+    const nextTheme = applyTheme(themeId);
+    persistTheme(nextTheme);
+    set({ theme: nextTheme });
+  },
+
+  setTheme: async (themeId) => {
+    const nextTheme = normalizeTheme(themeId);
+    const prevTheme = get().theme;
+
+    if (prevTheme === nextTheme) return nextTheme;
+
+    applyTheme(nextTheme);
+    persistTheme(nextTheme);
+    set({ theme: nextTheme });
+
+    if (!localStorage.getItem('token')) {
+      return nextTheme;
+    }
+
+    try {
+      await api.updateTheme({ theme: nextTheme });
+      return nextTheme;
+    } catch (err) {
+      applyTheme(prevTheme);
+      persistTheme(prevTheme);
+      set({ theme: prevTheme });
+      throw err;
+    }
   }
 }));

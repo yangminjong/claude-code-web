@@ -39,6 +39,10 @@ export function getDb() {
     db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
   }
 
+  if (!userCols.includes('theme')) {
+    db.exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'dark'");
+  }
+
   // Add claude_session_id column to sessions table (for --resume support)
   if (!sessionCols.includes('claude_session_id')) {
     db.exec('ALTER TABLE sessions ADD COLUMN claude_session_id TEXT');

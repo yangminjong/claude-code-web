@@ -17,6 +17,7 @@ export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [themeSaving, setThemeSaving] = useState(false);
   const [avatarLoading, setAvatarLoading] = useState(false);
   const [showSshForm, setShowSshForm] = useState(false);
   const [editingProfile, setEditingProfile] = useState(null);
@@ -84,6 +85,20 @@ export default function SettingsPage() {
     }
   };
 
+  const handleThemeChange = async (themeId) => {
+    if (themeSaving || theme === themeId) return;
+
+    setThemeSaving(true);
+    try {
+      await setTheme(themeId);
+      toast.success('테마 설정이 저장되었습니다');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setThemeSaving(false);
+    }
+  };
+
   return (
     <div className="settings-page">
       <h2>설정</h2>
@@ -137,7 +152,8 @@ export default function SettingsPage() {
             <button
               key={id}
               className={`theme-card ${theme === id ? 'active' : ''}`}
-              onClick={() => setTheme(id)}
+              onClick={() => handleThemeChange(id)}
+              disabled={themeSaving}
             >
               <div className="theme-preview">
                 <div className="theme-preview-sidebar" style={{ background: t.vars['--bg-secondary'] }} />

@@ -32,6 +32,7 @@ export const api = {
   logout: () => request('POST', '/auth/logout'),
   me: () => request('GET', '/auth/me'),
   changePassword: (body) => request('PUT', '/auth/password', body),
+  updateTheme: (body) => request('PUT', '/auth/theme', body),
   uploadAvatar: async (file) => {
     const form = new FormData();
     form.append('avatar', file);

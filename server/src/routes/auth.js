@@ -9,6 +9,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { auditLog } from '../services/auditLogger.js';
 
 const router = Router();
+const ALLOWED_THEMES = new Set(['dark', 'dimmed', 'light', 'solarized', 'nord', 'monokai']);
 
 const AVATAR_DIR = () => resolve(process.env.WORKSPACE_ROOT || '../workspace', '../avatars');
 const avatarUpload = multer({
@@ -49,7 +50,7 @@ router.post('/register', async (req, res) => {
       'INSERT INTO users (email, password_hash, display_name) VALUES (?, ?, ?)'
     ).run(email, passwordHash, displayName);
 
-    const user = { id: result.lastInsertRowid, email, displayName, avatarUrl: null };
+    const user = { id: result.lastInsertRowid, email, displayName, avatarUrl: null, theme: 'dark' };
     const token = signToken({ userId: user.id });
 
     res.status(201).json({ ok: true, data: { user, token } });
@@ -82,7 +83,13 @@ router.post('/login', async (req, res) => {
     res.json({
       ok: true,
       data: {
-        user: { id: user.id, email: user.email, displayName: user.display_name, avatarUrl: user.avatar_url || null },
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.display_name,
+          avatarUrl: user.avatar_url || null,
+          theme: user.theme || 'dark'
+        },
         token
       }
     });
@@ -107,10 +114,43 @@ router.get('/me', authenticate, (req, res) => {
         id: req.user.id,
         email: req.user.email,
         displayName: req.user.display_name,
-        avatarUrl: req.user.avatar_url || null
+        avatarUrl: req.user.avatar_url || null,
+        theme: req.user.theme || 'dark'
       }
     }
   });
+});
+
+// PUT /api/auth/theme
+router.put('/theme', authenticate, (req, res) => {
+  try {
+    const theme = String(req.body?.theme || '').trim();
+    if (!ALLOWED_THEMES.has(theme)) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '유효하지 않은 테마입니다' }
+      });
+    }
+
+    const db = getDb();
+    db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, req.user.id);
+
+    res.json({
+      ok: true,
+      data: {
+        user: {
+          id: req.user.id,
+          email: req.user.email,
+          displayName: req.user.display_name,
+          avatarUrl: req.user.avatar_url || null,
+          theme
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[auth] Theme update error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
 });
 
 // PUT /api/auth/password

@@ -16,7 +16,9 @@ export function authenticate(req, res, next) {
   try {
     const token = authHeader ? authHeader.slice(7) : queryToken;
     const payload = verifyToken(token);
-    const user = getDb().prepare('SELECT id, email, display_name FROM users WHERE id = ?').get(payload.userId);
+    const user = getDb().prepare(
+      'SELECT id, email, display_name, avatar_url, theme FROM users WHERE id = ?'
+    ).get(payload.userId);
     if (!user) {
       console.log('[auth] FAIL: user not found for', req.method, req.path, 'userId:', payload.userId);
       return res.status(401).json({

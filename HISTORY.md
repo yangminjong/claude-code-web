@@ -2,20 +2,93 @@
 
 ---
 
+## 2026-03-24
+
+### 9. [v2.7.2] 파일 에디터 (Monaco Editor)
+
+Explorer에서 텍스트/코드 파일 클릭 시 중앙 채팅 영역이 VS Code 스타일 에디터로 전환.
+
+**Monaco Editor 통합:**
+- `@monaco-editor/react` (CDN 런타임 로딩)
+- 확장자 기반 자동 언어 감지 (JavaScript, TypeScript, Python, Go, Rust, SQL 등 50+ 확장자)
+- 앱 테마에 따라 에디터 테마 자동 전환 (다크/라이트)
+- minimap, bracket pair colorization, smooth scrolling 등 VS Code 기본 설정
+
+**탭 시스템:**
+- 여러 파일을 동시에 열어 탭으로 전환
+- 수정된 파일 탭에 파란색 dot 표시 (dirty indicator)
+- 탭 닫기 시 미저장 변경사항 있으면 확인 다이얼로그
+- 마지막 탭 닫기 시 자동으로 채팅 화면 복귀
+
+**저장:**
+- Ctrl+S / Cmd+S 키보드 단축키
+- 탭 바 저장 버튼
+- 서버에 `PUT /api/files/write`로 저장, 감사 로그 기록
+
+**화면 전환:**
+- Explorer에서 텍스트 파일 클릭 → 에디터 표시
+- 탭 바 채팅 아이콘 클릭 → 채팅 화면 복귀
+- 사이드바 세션 클릭 → 채팅 화면 복귀
+- 에디터 탭이 있으면 에디터 유지, 없으면 자동으로 채팅
+
+**서버 API 추가:**
+- `GET /api/files/read?path=...` — 파일 내용 읽기 (UTF-8, 10MB 제한)
+- `PUT /api/files/write` — 파일 내용 저장 (감사 로그 기록)
+- `express.json()` body 제한 10MB로 증가
+
+**연동:**
+- Explorer에서 파일 삭제/이름변경 시 열린 에디터 탭 자동 정리
+
+**새 파일:**
+- `client/src/stores/editorStore.js` — 에디터 상태 관리
+- `client/src/components/Editor/EditorPanel.jsx` — 에디터 컴포넌트
+- `client/src/components/Editor/Editor.css` — 에디터 스타일
+
+**변경 파일:**
+- `server/src/routes/files.js` — read/write 엔드포인트 추가
+- `server/src/app.js` — body 크기 제한 증가
+- `client/src/api/client.js` — readFileContent, writeFileContent API
+- `client/src/components/Layout/AppShell.jsx` — 에디터/채팅 뷰 전환
+- `client/src/components/Explorer/ExplorerTree.jsx` — 파일 클릭 시 에디터 열기
+- `client/src/components/Session/SessionList.jsx` — 세션 선택 시 에디터 비활성화
+
+---
+
 ## 2026-03-23
 
 ### 8. [v2.7.1] VS Code 스타일 파일 익스플로러
 
 기존 `/files` 라우트 기반 파일 탐색기를 VS Code 스타일 오른쪽 패널 트리 뷰로 전환.
 
-**구현 내용:**
-- 오른쪽 패널: 메인 콘텐츠 오른쪽에 고정되는 Explorer 패널
+**Explorer 패널:**
+- 오른쪽 패널: 메인 콘텐츠 오른쪽에 고정, 기본 열림 상태
 - 트리 뷰: 폴더 클릭 시 온디맨드 디렉토리 로딩, 재귀적 확장/접기
 - 파일 아이콘: 확장자별 아이콘과 색상 (JS, JSX, TS, CSS, HTML, PY, SQL, MD 등)
 - 리사이즈: 왼쪽 드래그 핸들로 패널 너비 조절 (200~600px)
+- 패널 접기: 36px 세로 바로 축소, 클릭하면 펼침
 - VS Code 스타일 UI: EXPLORER 헤더, WORKSPACE 섹션 헤더, 22px 트리 노드
-- 사이드바 통합: '파일 탐색기' 버튼이 라우트 이동 대신 패널 토글
-- Zustand 스토어: 트리 상태, 확장 경로, 로딩, 패널 너비 관리
+
+**컨텍스트 메뉴 (우클릭):**
+- 새 파일 / 새 폴더: 인라인 입력으로 트리 내에서 직접 생성
+- 이름 변경: 인라인 입력, 확장자 전까지만 자동 선택
+- 다운로드 (파일만) / 삭제 (confirm 확인)
+- 빈 여백 우클릭 시 workspace 루트에 생성
+
+**드래그 앤 드롭:**
+- 외부 → 익스플로러: 파일 드래그 업로드, 파란색 점선 드롭존 오버레이
+- 익스플로러 → 외부: 파일 드래그 다운로드 (Chrome DownloadURL + uri-list fallback)
+
+**서버 API 추가:**
+- `POST /api/files/create` — 빈 파일 생성
+- `POST /api/files/mkdir` — 폴더 생성
+- `POST /api/files/rename` — 이름 변경
+- `DELETE /api/files` — 파일/폴더 삭제 (재귀)
+
+**버그 수정:**
+- 파일 업로드 500 에러: `renameSync`의 EXDEV (cross-device) 에러 → `copyFileSync` + `unlinkSync`
+- 한글 파일명 깨짐 (업로드): multer `originalname`이 latin1로 디코딩 → `Buffer.from(name, 'latin1').toString('utf8')`
+- 한글 파일명 깨짐 (다운로드): `Content-Disposition`에 RFC 5987 `filename*=UTF-8''인코딩` 적용
+- 인증 미들웨어: 쿼리 파라미터 `token` 지원 추가 (드래그 다운로드용)
 
 **새 파일:**
 - `client/src/stores/explorerStore.js` — Explorer 상태 관리
@@ -26,6 +99,9 @@
 **변경 파일:**
 - `client/src/components/Layout/AppShell.jsx` — ExplorerPanel 추가, /files 라우트 제거
 - `client/src/components/Layout/Sidebar.jsx` — 파일 탐색기 토글로 변경
+- `client/src/api/client.js` — createFile, createDir, renameFile, deleteFile, downloadFile 에러 처리
+- `server/src/routes/files.js` — mkdir, create, rename, delete 엔드포인트, 한글 파일명 수정
+- `server/src/middleware/authenticate.js` — 쿼리 파라미터 token 인증
 
 ---
 

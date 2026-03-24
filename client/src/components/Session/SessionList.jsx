@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSessionStore } from '../../stores/sessionStore.js';
+import { useEditorStore } from '../../stores/editorStore.js';
 import SessionItem from './SessionItem.jsx';
 import './Session.css';
 
@@ -20,6 +21,7 @@ export default function SessionList() {
 
   const handleSelect = (id) => {
     setActiveSession(id);
+    useEditorStore.getState().showChat();
     navigate('/');
   };
 

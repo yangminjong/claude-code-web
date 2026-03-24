@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useExplorerStore } from '../../stores/explorerStore.js';
+import { useEditorStore, isTextFile } from '../../stores/editorStore.js';
 import { api } from '../../api/client.js';
 import toast from 'react-hot-toast';
 
@@ -194,6 +195,7 @@ function ContextMenu({ x, y, node, onClose }) {
 
     try {
       await api.deleteFile(node.path);
+      useEditorStore.getState().closeTabsForPath(node.path);
       toast.success(`${node.name} 삭제됨`);
       refresh();
     } catch (err) {
@@ -266,6 +268,8 @@ function TreeNode({ node, depth = 0 }) {
     setSelectedPath(node.path);
     if (node.isDirectory) {
       toggleExpand(node.path);
+    } else if (isTextFile(node.name)) {
+      useEditorStore.getState().openFile(node.path, node.name);
     }
   };
 
@@ -297,6 +301,7 @@ function TreeNode({ node, depth = 0 }) {
     const newPath = parentPath === '.' ? newName : `${parentPath}/${newName}`;
     try {
       await api.renameFile(node.path, newPath);
+      useEditorStore.getState().closeTabsForPath(node.path);
       toast.success(`"${newName}" 으로 변경됨`);
       refresh();
     } catch (err) {

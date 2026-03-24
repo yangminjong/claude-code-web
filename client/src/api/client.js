@@ -70,6 +70,8 @@ export const api = {
   createDir: (path) => request('POST', '/files/mkdir', { path }),
   renameFile: (oldPath, newPath) => request('POST', '/files/rename', { oldPath, newPath }),
   deleteFile: (path) => request('DELETE', `/files?path=${encodeURIComponent(path)}`),
+  readFileContent: (path) => request('GET', `/files/read?path=${encodeURIComponent(path)}`),
+  writeFileContent: (path, content) => request('PUT', '/files/write', { path, content }),
   uploadFile: async (file, path = '.') => {
     const form = new FormData();
     form.append('file', file);

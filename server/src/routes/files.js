@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { resolve, basename } from 'path';
-import { readdirSync, statSync, createReadStream, mkdirSync, renameSync, writeFileSync, rmSync, existsSync, copyFileSync, unlinkSync } from 'fs';
+import { readdirSync, statSync, createReadStream, mkdirSync, renameSync, writeFileSync, readFileSync, rmSync, existsSync, copyFileSync, unlinkSync } from 'fs';
 import multer from 'multer';
 import { authenticate } from '../middleware/authenticate.js';
 import { pathGuard } from '../middleware/pathGuard.js';
@@ -269,6 +269,96 @@ router.post('/rename', authenticate, (req, res) => {
       return res.status(403).json({ ok: false, error: { code: err.code, message: err.message } });
     }
     console.error('[files] Rename error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// GET /api/files/read — read file content
+router.get('/read', authenticate, (req, res) => {
+  try {
+    const userRoot = getUserRoot(req.user);
+    const requestedPath = req.query.path;
+    if (!requestedPath) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: 'path 파라미터가 필요합니다' }
+      });
+    }
+
+    const resolvedPath = validatePath(userRoot, requestedPath);
+    const stat = statSync(resolvedPath);
+    if (stat.isDirectory()) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '디렉토리는 읽을 수 없습니다' }
+      });
+    }
+
+    // 10MB 제한
+    if (stat.size > 10 * 1024 * 1024) {
+      return res.status(413).json({
+        ok: false,
+        error: { code: 'FILE_TOO_LARGE', message: '파일이 너무 큽니다 (최대 10MB)' }
+      });
+    }
+
+    const content = readFileSync(resolvedPath, 'utf8');
+    res.json({ ok: true, data: { content, size: stat.size, modifiedAt: stat.mtime.toISOString() } });
+  } catch (err) {
+    if (err.code === 'PATH_TRAVERSAL_DENIED') {
+      return res.status(403).json({ ok: false, error: { code: err.code, message: err.message } });
+    }
+    if (err.code === 'ENOENT') {
+      return res.status(404).json({
+        ok: false,
+        error: { code: 'NOT_FOUND', message: '파일을 찾을 수 없습니다' }
+      });
+    }
+    console.error('[files] Read error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// PUT /api/files/write — write file content
+router.put('/write', authenticate, (req, res) => {
+  try {
+    const userRoot = getUserRoot(req.user);
+    const { path: filePath, content } = req.body;
+    if (!filePath) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '경로가 필요합니다' }
+      });
+    }
+    if (typeof content !== 'string') {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: 'content가 필요합니다' }
+      });
+    }
+
+    const resolvedPath = validatePath(userRoot, filePath);
+    if (!existsSync(resolvedPath)) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: 'NOT_FOUND', message: '파일을 찾을 수 없습니다' }
+      });
+    }
+
+    writeFileSync(resolvedPath, content, 'utf8');
+    const stat = statSync(resolvedPath);
+
+    auditLog(req.user.id, 'file_write', {
+      path: filePath,
+      size: stat.size
+    }, req.ip);
+
+    res.json({ ok: true, data: { path: filePath, size: stat.size, modifiedAt: stat.mtime.toISOString() } });
+  } catch (err) {
+    if (err.code === 'PATH_TRAVERSAL_DENIED') {
+      return res.status(403).json({ ok: false, error: { code: err.code, message: err.message } });
+    }
+    console.error('[files] Write error:', err);
     res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
   }
 });

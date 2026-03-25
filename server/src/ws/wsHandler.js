@@ -8,25 +8,25 @@ import { auditLog } from '../services/auditLogger.js';
 import { getProfileWithCredential, updateLastConnected } from '../services/sshProfileManager.js';
 
 /**
+ * Active WebSocket connections per session.
+ * sessionId -> { ws, heartbeatCheck, pendingProc, activeMessageId, fullResponse, ... }
+ */
+const activeConnections = new Map();
+
+/**
  * Extract displayable text from a stream-json line object.
- * Handles multiple possible output formats from Claude Code CLI.
  */
 function extractText(obj) {
-  // stream_event with text_delta — token-level streaming
   if (obj.type === 'stream_event' && obj.event?.type === 'content_block_delta'
       && obj.event.delta?.type === 'text_delta') {
     return obj.event.delta.text;
   }
-  // {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
   if (obj.type === 'content_block_delta' && obj.delta?.text) {
     return obj.delta.text;
   }
-  // Skip partial assistant messages (already handled via stream_event deltas)
-  // Only use the final assistant message if no stream_event deltas were received
   if (obj.type === 'assistant' && obj.message?.content) {
     return null;
   }
-  // {"type":"text","text":"..."}
   if (obj.type === 'text' && typeof obj.text === 'string') {
     return obj.text;
   }
@@ -40,6 +40,17 @@ function extractSessionId(obj) {
   return obj.session_id || obj.sessionId || obj.message?.session_id || null;
 }
 
+/**
+ * Safe send — only sends if ws is OPEN
+ */
+function safeSend(ws, data) {
+  if (ws && ws.readyState === ws.OPEN) {
+    ws.send(typeof data === 'string' ? data : JSON.stringify(data));
+    return true;
+  }
+  return false;
+}
+
 export function handleConnection(ws, userId, sessionId) {
   const session = getSession(sessionId);
   if (!session || session.user_id !== userId) {
@@ -48,8 +59,22 @@ export function handleConnection(ws, userId, sessionId) {
     return;
   }
 
-  // Allow connecting to ended/error sessions (for resume)
-  // The actual resume happens via POST /api/sessions/:id/resume before WS connect
+  // --- Handle reconnection: replace old WS for same session ---
+  const existing = activeConnections.get(sessionId);
+  if (existing) {
+    console.log(`[ws] Session ${sessionId}: replacing existing connection (reconnect)`);
+    if (existing.heartbeatCheck) {
+      clearInterval(existing.heartbeatCheck);
+    }
+    if (existing.ws) {
+      try {
+        if (existing.ws.readyState === existing.ws.OPEN) {
+          existing.ws.close(4000, 'replaced');
+        }
+        existing.ws.removeAllListeners?.();
+      } catch {}
+    }
+  }
 
   // Restore claude_session_id from DB to memory (for resumed sessions)
   if (session.claude_session_id && !getClaudeSessionId(sessionId)) {
@@ -64,7 +89,40 @@ export function handleConnection(ws, userId, sessionId) {
     }
   }, 30000);
 
-  ws.send(JSON.stringify({ type: 'connected', sessionId }));
+  // Store connection — carry over pending state from old connection
+  const connEntry = {
+    ws,
+    heartbeatCheck,
+    pendingProc: existing?.pendingProc || null,
+    activeMessageId: existing?.activeMessageId || null,
+    fullResponse: existing?.fullResponse || '',
+    capturedSessionId: existing?.capturedSessionId || false,
+    unsentEnd: existing?.unsentEnd || null,
+  };
+  activeConnections.set(sessionId, connEntry);
+
+  safeSend(ws, { type: 'connected', sessionId });
+
+  // Case 1: Process still running — re-pipe its output
+  if (connEntry.pendingProc) {
+    console.log(`[ws] Session ${sessionId}: re-attaching to pending process (messageId: ${connEntry.activeMessageId})`);
+    safeSend(ws, { type: 'assistant_start', messageId: connEntry.activeMessageId });
+    if (connEntry.fullResponse) {
+      safeSend(ws, { type: 'assistant_chunk', content: connEntry.fullResponse, messageId: connEntry.activeMessageId });
+    }
+  }
+  // Case 2: Process finished while disconnected — deliver the saved response
+  else if (connEntry.unsentEnd) {
+    console.log(`[ws] Session ${sessionId}: delivering response that completed while disconnected`);
+    const { content, exitCode, messageId } = connEntry.unsentEnd;
+    safeSend(ws, { type: 'assistant_start', messageId });
+    if (content) {
+      safeSend(ws, { type: 'assistant_chunk', content, messageId });
+    }
+    safeSend(ws, { type: 'assistant_end', content, exitCode, messageId });
+    connEntry.unsentEnd = null;
+    activeConnections.delete(sessionId);
+  }
 
   ws.on('message', (raw) => {
     try {
@@ -72,18 +130,25 @@ export function handleConnection(ws, userId, sessionId) {
 
       switch (msg.type) {
         case 'message':
-          handleUserMessage(ws, sessionId, session, msg.content);
+          handleUserMessage(ws, sessionId, session, msg.content, msg.messageId);
           break;
 
         case 'cancel':
           if (cancelProcess(sessionId)) {
-            ws.send(JSON.stringify({ type: 'assistant_cancelled' }));
+            const conn = activeConnections.get(sessionId);
+            const mid = conn?.activeMessageId || msg.messageId;
+            safeSend(ws, { type: 'assistant_cancelled', messageId: mid });
+            if (conn) {
+              conn.pendingProc = null;
+              conn.fullResponse = '';
+              conn.activeMessageId = null;
+            }
           }
           break;
 
         case 'heartbeat':
           lastHeartbeat = Date.now();
-          ws.send(JSON.stringify({ type: 'heartbeat_ack' }));
+          safeSend(ws, { type: 'heartbeat_ack' });
           break;
 
         default:
@@ -96,6 +161,18 @@ export function handleConnection(ws, userId, sessionId) {
 
   ws.on('close', () => {
     clearInterval(heartbeatCheck);
+
+    const conn = activeConnections.get(sessionId);
+    if (conn && conn.ws === ws) {
+      if (conn.pendingProc) {
+        console.log(`[ws] Session ${sessionId}: WS closed but process still running, keeping entry for reconnect`);
+        conn.ws = null;
+        conn.heartbeatCheck = null;
+      } else {
+        activeConnections.delete(sessionId);
+      }
+    }
+
     auditLog(userId, 'ws_disconnect', { sessionId });
   });
 
@@ -104,14 +181,14 @@ export function handleConnection(ws, userId, sessionId) {
   });
 }
 
-function handleUserMessage(ws, sessionId, session, content) {
+function handleUserMessage(ws, sessionId, session, content, messageId) {
   if (!content || typeof content !== 'string') {
-    ws.send(JSON.stringify({ type: 'error', message: '메시지 내용이 비어있습니다' }));
+    safeSend(ws, { type: 'error', message: '메시지 내용이 비어있습니다', messageId });
     return;
   }
 
   if (isProcessBusy(sessionId)) {
-    ws.send(JSON.stringify({ type: 'error', message: '이전 응답이 완료되지 않았습니다. 잠시 후 다시 시도하세요.' }));
+    safeSend(ws, { type: 'error', message: '이전 응답이 완료되지 않았습니다. 잠시 후 다시 시도하세요.', messageId });
     return;
   }
 
@@ -119,16 +196,16 @@ function handleUserMessage(ws, sessionId, session, content) {
   if (session.name === '새 채팅') {
     const autoName = content.length > 30 ? content.substring(0, 30) + '...' : content;
     updateSessionName(sessionId, autoName);
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({ type: 'session_renamed', name: autoName }));
-    }
+    safeSend(ws, { type: 'session_renamed', name: autoName });
   }
 
   // Save user message to DB
   addMessage(sessionId, 'user', content);
 
-  // Notify client that assistant is thinking
-  ws.send(JSON.stringify({ type: 'assistant_start' }));
+  // Notify client — tag with messageId so client knows which question this answers
+  safeSend(ws, { type: 'assistant_start', messageId });
+
+  console.log(`[ws] Session ${sessionId}: processing message ${messageId} — "${content.slice(0, 50)}"`);
 
   // Use DB-persisted claude_session_id first, fall back to in-memory
   const dbSession = getSession(sessionId);
@@ -139,7 +216,7 @@ function handleUserMessage(ws, sessionId, session, content) {
     if (session.work_mode === 'ssh') {
       const profile = getProfileWithCredential(session.ssh_profile_id, session.user_id);
       if (!profile) {
-        ws.send(JSON.stringify({ type: 'error', message: 'SSH 프로필을 찾을 수 없습니다' }));
+        safeSend(ws, { type: 'error', message: 'SSH 프로필을 찾을 수 없습니다', messageId });
         return;
       }
       proc = sendMessageSSH(sessionId, content, session.project_path, claudeSessionId, {
@@ -156,18 +233,25 @@ function handleUserMessage(ws, sessionId, session, content) {
       proc = sendMessage(sessionId, content, session.project_path, claudeSessionId);
     }
   } catch (err) {
-    ws.send(JSON.stringify({ type: 'error', message: err.message }));
+    safeSend(ws, { type: 'error', message: err.message, messageId });
     return;
   }
 
-  let fullResponse = '';
+  // Track pending process + messageId for reconnect recovery
+  const conn = activeConnections.get(sessionId);
+  if (conn) {
+    conn.pendingProc = proc;
+    conn.activeMessageId = messageId;
+    conn.fullResponse = '';
+    conn.capturedSessionId = false;
+  }
+
   let lineBuffer = '';
-  let capturedSessionId = false;
 
   proc.stdout.on('data', (chunk) => {
     lineBuffer += chunk.toString();
     const lines = lineBuffer.split('\n');
-    lineBuffer = lines.pop(); // keep incomplete last line
+    lineBuffer = lines.pop();
 
     for (const line of lines) {
       processJsonLine(line);
@@ -176,35 +260,70 @@ function handleUserMessage(ws, sessionId, session, content) {
 
   proc.stderr.on('data', (chunk) => {
     const text = chunk.toString();
-    // Claude Code may output progress/status info to stderr — ignore or log
     console.error(`[claude stderr] ${text.trim()}`);
   });
 
   proc.on('close', (code) => {
-    // Process remaining buffer
     if (lineBuffer.trim()) {
       processJsonLine(lineBuffer);
     }
+
+    const conn = activeConnections.get(sessionId);
+    const fullResponse = conn?.fullResponse || '';
 
     // Save assistant response to DB
     if (fullResponse) {
       addMessage(sessionId, 'assistant', fullResponse);
     }
 
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'assistant_end',
-        content: fullResponse,
-        exitCode: code
-      }));
+    // Clear pending proc
+    if (conn) {
+      conn.pendingProc = null;
     }
+
+    // Send completion — tagged with messageId
+    const currentWs = conn?.ws;
+    const sent = safeSend(currentWs, {
+      type: 'assistant_end',
+      content: fullResponse,
+      exitCode: code,
+      messageId
+    });
+
+    if (conn && !conn.ws) {
+      if (!sent && fullResponse) {
+        console.log(`[ws] Session ${sessionId}: process finished while disconnected, saving response for reconnect`);
+        conn.unsentEnd = { content: fullResponse, exitCode: code, messageId };
+        setTimeout(() => {
+          const c = activeConnections.get(sessionId);
+          if (c && c.unsentEnd && !c.ws) {
+            activeConnections.delete(sessionId);
+          }
+        }, 60000);
+      } else {
+        activeConnections.delete(sessionId);
+      }
+    }
+
+    if (conn) {
+      conn.activeMessageId = null;
+    }
+
+    console.log(`[ws] Session ${sessionId}: message ${messageId} completed (${fullResponse.length} chars)`);
   });
 
   proc.on('error', (err) => {
-    ws.send(JSON.stringify({
+    const conn = activeConnections.get(sessionId);
+    if (conn) {
+      conn.pendingProc = null;
+      conn.activeMessageId = null;
+    }
+    const currentWs = conn?.ws;
+    safeSend(currentWs, {
       type: 'error',
-      message: `프로세스 오류: ${err.message}`
-    }));
+      message: `프로세스 오류: ${err.message}`,
+      messageId
+    });
   });
 
   function processJsonLine(line) {
@@ -212,32 +331,32 @@ function handleUserMessage(ws, sessionId, session, content) {
     try {
       const obj = JSON.parse(line);
 
+      const conn = activeConnections.get(sessionId);
+
       // Capture claude session ID for --resume on next message
-      if (!capturedSessionId) {
+      if (conn && !conn.capturedSessionId) {
         const sid = extractSessionId(obj);
         if (sid) {
           setClaudeSessionId(sessionId, sid);
           updateClaudeSessionId(sessionId, sid);
-          capturedSessionId = true;
+          conn.capturedSessionId = true;
         }
       }
 
       // Fallback: if result has text and we got nothing from streaming
-      if (obj.type === 'result' && obj.result && !fullResponse) {
-        fullResponse = obj.result;
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'assistant_chunk', content: obj.result }));
-        }
+      if (obj.type === 'result' && obj.result && conn && !conn.fullResponse) {
+        conn.fullResponse = obj.result;
+        const currentWs = conn?.ws;
+        safeSend(currentWs, { type: 'assistant_chunk', content: obj.result, messageId });
         return;
       }
 
-      // Extract text and send to client
+      // Extract text and send to client — tagged with messageId
       const text = extractText(obj);
       if (text) {
-        fullResponse += text;
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'assistant_chunk', content: text }));
-        }
+        if (conn) conn.fullResponse += text;
+        const currentWs = conn?.ws;
+        safeSend(currentWs, { type: 'assistant_chunk', content: text, messageId });
       }
     } catch {
       // Not valid JSON — ignore non-JSON output

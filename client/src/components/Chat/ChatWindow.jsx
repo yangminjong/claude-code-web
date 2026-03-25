@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useSessionStore } from '../../stores/sessionStore.js';
 import { useAuthStore } from '../../stores/authStore.js';
-import { useWebSocket } from '../../hooks/useWebSocket.js';
+import { useWebSocket, WS_STATE } from '../../hooks/useWebSocket.js';
 import { api } from '../../api/client.js';
 import MessageBubble from './MessageBubble.jsx';
 import ClaudeAvatar from './ClaudeAvatar.jsx';
@@ -49,8 +49,8 @@ export default function ChatWindow() {
   }, [activeSessionId]);
 
   const {
-    connected, thinking, streamingText,
-    sendMessage, cancelResponse, onComplete
+    connected, connState, retryCount, thinking, streamingText,
+    sendMessage, cancelResponse, onComplete, reconnect
   } = useWebSocket(isLive ? activeSessionId : null, token);
 
   // When assistant response completes, add it to message list
@@ -150,10 +150,19 @@ export default function ChatWindow() {
           )}
         </div>
         <div className="chat-header-right">
-          {isLive && (
-            <span className={`chat-header-status ${connected ? 'active' : 'disconnected'}`}>
-              {connected ? '연결됨' : '연결 중...'}
+          {isLive && connState === WS_STATE.CONNECTED && (
+            <span className="chat-header-status active">연결됨</span>
+          )}
+          {isLive && connState === WS_STATE.CONNECTING && (
+            <span className="chat-header-status connecting">연결 중...</span>
+          )}
+          {isLive && connState === WS_STATE.RECONNECTING && (
+            <span className="chat-header-status reconnecting">
+              재연결 중{retryCount > 0 ? ` (${retryCount}회)` : '...'}
             </span>
+          )}
+          {isLive && connState === WS_STATE.DISCONNECTED && (
+            <span className="chat-header-status disconnected">연결 끊김</span>
           )}
           {isEnded && <span className="chat-header-status ended">종료됨</span>}
           <button
@@ -173,6 +182,22 @@ export default function ChatWindow() {
           </button>
         </div>
       </div>
+
+      {/* Reconnection banner */}
+      {isLive && connState === WS_STATE.RECONNECTING && (
+        <div className="ws-reconnect-banner">
+          <span className="ws-reconnect-spinner" />
+          <span>연결이 끊어졌습니다. 재연결 시도 중... ({retryCount}회)</span>
+        </div>
+      )}
+      {isLive && connState === WS_STATE.DISCONNECTED && retryCount > 0 && (
+        <div className="ws-reconnect-banner failed">
+          <span>연결에 실패했습니다.</span>
+          <button className="btn btn-sm btn-primary" onClick={reconnect} style={{ marginLeft: 8 }}>
+            다시 연결
+          </button>
+        </div>
+      )}
 
       <div className="chat-messages">
         {messages.length === 0 && !isTyping && (
@@ -238,9 +263,15 @@ export default function ChatWindow() {
               value={input}
               onChange={handleTextareaInput}
               onKeyDown={handleKeyDown}
-              placeholder="메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
+              placeholder={
+                connState === WS_STATE.RECONNECTING
+                  ? '재연결 중... 메시지는 연결 후 자동 전송됩니다'
+                  : connState === WS_STATE.DISCONNECTED
+                    ? '연결이 끊어졌습니다'
+                    : '메시지를 입력하세요... (Shift+Enter로 줄바꿈)'
+              }
               rows={1}
-              disabled={!connected}
+              disabled={connState === WS_STATE.DISCONNECTED && retryCount > 0}
             />
             {isTyping ? (
               <button className="btn btn-danger chat-send-btn" onClick={cancelResponse}>
@@ -250,7 +281,7 @@ export default function ChatWindow() {
               <button
                 className="btn btn-primary chat-send-btn"
                 onClick={handleSend}
-                disabled={!input.trim() || !connected}
+                disabled={!input.trim() || (connState === WS_STATE.DISCONNECTED && retryCount > 0)}
               >
                 전송
               </button>

@@ -11,7 +11,7 @@ const WORKSPACE_ROOT = () => resolve(process.env.WORKSPACE_ROOT || '../workspace
 const MAX_SESSIONS = () => parseInt(process.env.MAX_SESSIONS_PER_USER || '3', 10);
 const IDLE_TIMEOUT = () => parseInt(process.env.IDLE_TIMEOUT_MINUTES || '30', 10) * 60 * 1000;
 
-export function createSession(userId, { name, workMode = 'server', projectPath = 'default', sshProfileId = null }) {
+export function createSession(userId, { name, workMode = 'server', projectPath = 'default', sshProfileId = null, absoluteWorkDir = null }) {
   const db = getDb();
 
   // Check session limit
@@ -54,6 +54,10 @@ export function createSession(userId, { name, workMode = 'server', projectPath =
     }
 
     workDir = projectPath; // remote path as-is
+  } else if (absoluteWorkDir) {
+    // Adopt mode: use the absolute path directly (e.g. from CLI session)
+    workDir = absoluteWorkDir;
+    mkdirSync(workDir, { recursive: true });
   } else {
     // Local mode: resolve and create workspace directory
     const user = db.prepare('SELECT email FROM users WHERE id = ?').get(userId);

@@ -11,7 +11,7 @@ import { auditLog } from '../services/auditLogger.js';
 const router = Router();
 const ALLOWED_THEMES = new Set(['dark', 'dimmed', 'light', 'solarized', 'nord', 'monokai']);
 
-const AVATAR_DIR = () => resolve(process.env.WORKSPACE_ROOT || '../workspace', '../avatars');
+const AVATAR_DIR = () => resolve(process.env.AVATAR_DIR || resolve(process.env.WORKSPACE_ROOT || '../workspace', '../avatars'));
 const avatarUpload = multer({
   dest: '/tmp/claude-code-web-avatars',
   limits: { fileSize: 2 * 1024 * 1024 }, // 2MB

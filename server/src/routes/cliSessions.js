@@ -8,7 +8,8 @@ const router = Router();
 router.get('/', authenticate, (req, res) => {
   try {
     const { project, find, limit, sort, refresh } = req.query;
-    const sessions = getCliSessions({ project, find, limit, sort, refresh });
+    const username = req.user.email.split('@')[0];
+    const sessions = getCliSessions({ project, find, limit, sort, refresh, username });
     res.json({ ok: true, data: { sessions } });
   } catch (err) {
     console.error('[cli-sessions] List error:', err);
@@ -20,7 +21,8 @@ router.get('/', authenticate, (req, res) => {
 router.get('/stats', authenticate, (req, res) => {
   try {
     const { refresh } = req.query;
-    const stats = getCliSessionStats(!!refresh);
+    const username = req.user.email.split('@')[0];
+    const stats = getCliSessionStats(!!refresh, username);
     res.json({ ok: true, data: stats });
   } catch (err) {
     console.error('[cli-sessions] Stats error:', err);

@@ -7,6 +7,7 @@ import { deleteClaudeCliSession } from '../utils/claudeSessionCleaner.js';
 
 const HOME = process.env.HOME || '/home/' + (process.env.USER || 'root');
 const PROJECTS_DIR = resolve(HOME, '.claude/projects');
+const WORKSPACE_ROOT = () => resolve(process.env.WORKSPACE_ROOT || '../workspace');
 const CACHE_TTL = 60 * 1000;
 
 let _cache = null;
@@ -188,8 +189,14 @@ function getCachedSessions(forceRefresh = false) {
   return _cache;
 }
 
-export function getCliSessions({ project, find, limit, sort, refresh } = {}) {
+export function getCliSessions({ project, find, limit, sort, refresh, username } = {}) {
   let records = getCachedSessions(!!refresh);
+
+  // Filter by user's workspace path
+  if (username) {
+    const userRoot = resolve(WORKSPACE_ROOT(), username);
+    records = records.filter(r => r.project && r.project.startsWith(userRoot));
+  }
 
   if (project) {
     records = records.filter(r => r.project === project);
@@ -220,8 +227,14 @@ export function getCliSessions({ project, find, limit, sort, refresh } = {}) {
   return records;
 }
 
-export function getCliSessionStats(forceRefresh = false) {
-  const records = getCachedSessions(forceRefresh);
+export function getCliSessionStats(forceRefresh = false, username = null) {
+  let records = getCachedSessions(forceRefresh);
+
+  if (username) {
+    const userRoot = resolve(WORKSPACE_ROOT(), username);
+    records = records.filter(r => r.project && r.project.startsWith(userRoot));
+  }
+
   const projects = new Set();
   let totalSize = 0;
 
@@ -250,7 +263,8 @@ export function adoptCliSession(sessionId, sessionName, project, userId) {
   const session = createSession(userId, {
     name: sessionName || 'CLI 세션',
     workMode: 'server',
-    projectPath: project || 'default'
+    projectPath: 'default',
+    absoluteWorkDir: project || null
   });
 
   db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(sessionId, session.id);

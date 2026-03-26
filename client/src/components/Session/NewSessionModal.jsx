@@ -137,7 +137,7 @@ export default function NewSessionModal({ onClose }) {
               )}
             </div>
             {workMode === 'server' && (
-              <span className="form-hint">workspace/{'{username}'}/{projectPath} 에 생성됩니다</span>
+              <span className="form-hint">workspaces/{'{username}'}/{projectPath} 에 생성됩니다</span>
             )}
             {workMode === 'ssh' && (
               <span className="form-hint">

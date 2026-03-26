@@ -2,6 +2,73 @@
 
 ---
 
+## 2026-03-26
+
+### 12. [v2.7.5] Workspace 경로 분리
+
+기존 `workspace/`가 `claude-code-web/` Git 저장소 내부에 위치하여, 사용자 워크스페이스에서 Claude Code 실행 시 상위 앱의 `.git`을 인식하는 문제 해결. 사용자 데이터를 Git 저장소 밖으로 분리.
+
+**경로 변경:**
+- `claude-code-web/workspace/` → `/home/forelink/claude/workspaces/` (Git 저장소 밖)
+- `claude-code-web/avatars/` → `/home/forelink/claude/avatars/` (WORKSPACE_ROOT 상대 계산 유지)
+
+**서버 설정:**
+- `.env`: `WORKSPACE_ROOT`를 상대경로(`../workspace`)에서 절대경로(`/home/forelink/claude/workspaces`)로 변경
+- `auth.js`: `AVATAR_DIR`에 `AVATAR_DIR` 환경변수 우선 참조 추가
+
+**adopt 버그 수정:**
+- `cliSessionService.js`: `adoptCliSession()`에서 CLI 세션의 절대경로를 `createSession`의 `projectPath`로 전달하면 `WORKSPACE_ROOT + username + absolutePath`로 이중 결합되는 버그
+- `sessionManager.js`: `absoluteWorkDir` 옵션 추가 — adopt 시 경로 resolve를 우회하고 절대경로를 직접 사용
+
+**DB 마이그레이션:**
+- `sessions.project_path`에서 이전 경로(`/home/forelink/claude/claude-code-web/workspace/`)를 새 경로(`/home/forelink/claude/workspaces/`)로 치환 (12건)
+
+**CLI 히스토리 유저 필터링:**
+- 기존: `~/.claude/projects/` 전체를 스캔하여 모든 CLI 세션 표시
+- 변경: 로그인 유저의 workspace 경로(`WORKSPACE_ROOT/{username}/`)에 해당하는 세션만 표시
+- `getCliSessions()`, `getCliSessionStats()`에 `username` 파라미터 추가
+- `cliSessions.js` 라우트에서 `req.user.email`로 username 추출하여 전달
+
+**기타:**
+- `NewSessionModal.jsx`: 힌트 텍스트 `workspace/` → `workspaces/` 업데이트
+- `.gitignore`: `workspace/` 항목 제거 (더 이상 Git 저장소 내에 없음)
+
+**변경 파일:**
+- `server/.env` — WORKSPACE_ROOT 절대경로 변경
+- `server/.env.example` — 동일
+- `server/src/routes/auth.js` — AVATAR_DIR 환경변수 우선 참조
+- `server/src/services/sessionManager.js` — absoluteWorkDir 옵션 추가
+- `server/src/services/cliSessionService.js` — adopt 시 absoluteWorkDir 사용, 유저 필터링 추가
+- `server/src/routes/cliSessions.js` — username을 서비스에 전달
+- `client/src/components/Session/NewSessionModal.jsx` — 힌트 텍스트 수정
+- `.gitignore` — workspace/ 항목 제거
+
+---
+
+### 11. [v2.7.4] Claude 캐릭터 아바타
+
+채팅 아바타를 기존 Claude SVG 로고에서 픽셀 캐릭터 이미지로 교체. 상태에 따라 정적/애니메이션 전환.
+
+**이미지 에셋:**
+- `data/image/chat.png` — 기본 정적 아바타 (픽셀 캐릭터)
+- `data/image/chatbarq.gif` — 응답 중 애니메이션 (쳇바퀴 돌리는 캐릭터)
+
+**구현:**
+- `ClaudeAvatar` 컴포넌트: SVG 제거, `isAnimated` prop에 따라 `chat.png` / `chatbarq.gif` 전환
+- `MessageBubble`: 스트리밍 중(`isStreaming`)이면 `isAnimated=true`
+- `ChatWindow`: thinking indicator에서 `isAnimated` 적용
+- `server/src/app.js`: `data/image/`를 `/assets/image/`로 정적 서빙 (7일 캐시)
+- `vite.config.js`: `/assets` 프록시 추가 (dev 모드)
+
+**변경 파일:**
+- `client/src/components/Chat/ClaudeAvatar.jsx` — SVG → 이미지 기반으로 전면 교체
+- `client/src/components/Chat/ChatWindow.jsx` — thinking indicator에 `isAnimated` 추가
+- `client/src/components/Chat/MessageBubble.jsx` — 스트리밍 시 `isAnimated` 전달
+- `server/src/app.js` — `/assets/image` 정적 서빙 추가
+- `client/vite.config.js` — `/assets` 프록시 추가
+
+---
+
 ## 2026-03-25
 
 ### 10. [v2.7.3] WebSocket 재연결 강화 + messageId 기반 요청-응답 매칭

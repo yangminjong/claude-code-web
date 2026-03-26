@@ -196,8 +196,8 @@ function handleUserMessage(ws, sessionId, session, content, messageId, parentMes
     return;
   }
 
-  // Auto-rename session on first message (if still "새 채팅")
-  if (session.name === '새 채팅') {
+  // Auto-rename session on first message (if still "새 작업")
+  if (session.name === '새 작업') {
     const autoName = content.length > 30 ? content.substring(0, 30) + '...' : content;
     updateSessionName(sessionId, autoName);
     safeSend(ws, { type: 'session_renamed', name: autoName });

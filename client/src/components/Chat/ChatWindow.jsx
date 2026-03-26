@@ -10,7 +10,6 @@ import './Chat.css';
 
 function formatTimeAgo(dateStr) {
   if (!dateStr) return '';
-  // DB stores UTC without 'Z' suffix — append it so JS parses correctly
   const ts = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
   const diff = Date.now() - new Date(ts).getTime();
   const mins = Math.floor(diff / 60000);
@@ -29,17 +28,16 @@ function formatSize(bytes) {
 }
 
 export default function ChatWindow() {
-  const { activeSessionId, messages, addMessage, sessions, resumeSession, deleteSessionPermanently, reloadMessages, switchBranch } = useSessionStore();
+  const { activeSessionId, messages, addMessage, sessions, createSession, activateSession, deleteSessionPermanently, reloadMessages, switchBranch } = useSessionStore();
   const token = useAuthStore((s) => s.token);
   const [input, setInput] = useState('');
-  const [resuming, setResuming] = useState(false);
   const [metadata, setMetadata] = useState(null);
+  const [creating, setCreating] = useState(false);
   const chatEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const pendingMessageRef = useRef(null);
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
-  const isLive = activeSession && (activeSession.status === 'active' || activeSession.status === 'idle');
-  const canResume = activeSession && (activeSession.status === 'ended' || activeSession.status === 'error');
 
   // Fetch metadata when session changes
   useEffect(() => {
@@ -51,7 +49,7 @@ export default function ChatWindow() {
   const {
     connected, connState, retryCount, thinking, streamingText,
     sendMessage, regenerate, cancelResponse, onComplete, reconnect
-  } = useWebSocket(isLive ? activeSessionId : null, token);
+  } = useWebSocket(activeSessionId, token);
 
   // When assistant response completes, add it to message list
   useEffect(() => {
@@ -83,9 +81,18 @@ export default function ChatWindow() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingText, thinking]);
 
-  const handleSend = () => {
+  // Send pending message after session creation
+  useEffect(() => {
+    if (activeSessionId && connected && pendingMessageRef.current) {
+      const text = pendingMessageRef.current;
+      pendingMessageRef.current = null;
+      sendMessage(text);
+    }
+  }, [activeSessionId, connected]);
+
+  const handleSend = async () => {
     const text = input.trim();
-    if (!text || thinking || streamingText) return;
+    if (!text || thinking || streamingText || creating) return;
 
     // Find the last message's DB ID to use as parent
     const lastMsg = messages[messages.length - 1];
@@ -97,13 +104,25 @@ export default function ChatWindow() {
       content: text,
       created_at: new Date().toISOString()
     });
+    setInput('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+
+    // If no session, create one first
+    if (!activeSessionId) {
+      setCreating(true);
+      try {
+        const session = await createSession('새 작업');
+        pendingMessageRef.current = text;
+        activateSession(session.id);
+      } catch (err) {
+        toast.error(err.message);
+      } finally {
+        setCreating(false);
+      }
+      return;
+    }
 
     sendMessage(text, parentId);
-    setInput('');
-
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
   };
 
   const handleRegenerate = (userMessageId) => {
@@ -124,19 +143,63 @@ export default function ChatWindow() {
     e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
   };
 
-  // No session selected
+  // No session selected — show empty chat ready for input
   if (!activeSessionId) {
     return (
-      <div className="chat-empty">
-        <div className="chat-empty-content">
-          <h2>Claude Code Web</h2>
-          <p>왼쪽 사이드바에서 세션을 선택하거나 새 세션을 만드세요</p>
+      <div className="chat-container">
+        <div className="chat-header-bar">
+          <div className="chat-header-left">
+            <span className="chat-header-title">새 작업</span>
+          </div>
+        </div>
+
+        <div className="chat-messages">
+          {messages.length === 0 && (
+            <div className="chat-welcome">
+              <p>메시지를 입력하여 Claude와 대화를 시작하세요</p>
+            </div>
+          )}
+          {messages.map((msg, i) => (
+            <MessageBubble key={msg.id || `msg-${i}`} role={msg.role} content={msg.content} />
+          ))}
+          {creating && (
+            <div className="message assistant">
+              <div className="message-avatar"><ClaudeAvatar size={32} isAnimated /></div>
+              <div className="message-body">
+                <div className="thinking-indicator">
+                  <span className="dot" /><span className="dot" /><span className="dot" />
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        <div className="chat-input-area">
+          <div className="chat-input-wrapper">
+            <textarea
+              ref={textareaRef}
+              className="chat-input"
+              value={input}
+              onChange={handleTextareaInput}
+              onKeyDown={handleKeyDown}
+              placeholder="메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
+              rows={1}
+              disabled={creating}
+            />
+            <button
+              className="btn btn-primary chat-send-btn"
+              onClick={handleSend}
+              disabled={!input.trim() || creating}
+            >
+              전송
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  const isEnded = !isLive;
   const isTyping = thinking || !!streamingText;
 
   return (
@@ -167,21 +230,20 @@ export default function ChatWindow() {
           )}
         </div>
         <div className="chat-header-right">
-          {isLive && connState === WS_STATE.CONNECTED && (
+          {connState === WS_STATE.CONNECTED && (
             <span className="chat-header-status active">연결됨</span>
           )}
-          {isLive && connState === WS_STATE.CONNECTING && (
+          {connState === WS_STATE.CONNECTING && (
             <span className="chat-header-status connecting">연결 중...</span>
           )}
-          {isLive && connState === WS_STATE.RECONNECTING && (
+          {connState === WS_STATE.RECONNECTING && (
             <span className="chat-header-status reconnecting">
               재연결 중{retryCount > 0 ? ` (${retryCount}회)` : '...'}
             </span>
           )}
-          {isLive && connState === WS_STATE.DISCONNECTED && (
+          {connState === WS_STATE.DISCONNECTED && (
             <span className="chat-header-status disconnected">연결 끊김</span>
           )}
-          {isEnded && <span className="chat-header-status ended">종료됨</span>}
           <button
             className="btn-icon chat-delete-btn"
             title="세션 삭제"
@@ -201,13 +263,13 @@ export default function ChatWindow() {
       </div>
 
       {/* Reconnection banner */}
-      {isLive && connState === WS_STATE.RECONNECTING && (
+      {connState === WS_STATE.RECONNECTING && (
         <div className="ws-reconnect-banner">
           <span className="ws-reconnect-spinner" />
           <span>연결이 끊어졌습니다. 재연결 시도 중... ({retryCount}회)</span>
         </div>
       )}
-      {isLive && connState === WS_STATE.DISCONNECTED && retryCount > 0 && (
+      {connState === WS_STATE.DISCONNECTED && retryCount > 0 && (
         <div className="ws-reconnect-banner failed">
           <span>연결에 실패했습니다.</span>
           <button className="btn btn-sm btn-primary" onClick={reconnect} style={{ marginLeft: 8 }}>
@@ -258,63 +320,37 @@ export default function ChatWindow() {
       </div>
 
       <div className="chat-input-area">
-        {isEnded ? (
-          <div className="chat-ended">
-            <span>세션이 종료되었습니다</span>
-            {canResume && (
-              <button
-                className="btn btn-primary"
-                style={{ marginLeft: '12px' }}
-                disabled={resuming}
-                onClick={async () => {
-                  setResuming(true);
-                  try {
-                    await resumeSession(activeSessionId);
-                    toast.success('세션이 재개되었습니다');
-                  } catch (err) {
-                    toast.error(err.message);
-                  } finally {
-                    setResuming(false);
-                  }
-                }}
-              >
-                {resuming ? '재개 중...' : '이어서 대화'}
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="chat-input-wrapper">
-            <textarea
-              ref={textareaRef}
-              className="chat-input"
-              value={input}
-              onChange={handleTextareaInput}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                connState === WS_STATE.RECONNECTING
-                  ? '재연결 중... 메시지는 연결 후 자동 전송됩니다'
-                  : connState === WS_STATE.DISCONNECTED
-                    ? '연결이 끊어졌습니다'
-                    : '메시지를 입력하세요... (Shift+Enter로 줄바꿈)'
-              }
-              rows={1}
-              disabled={connState === WS_STATE.DISCONNECTED && retryCount > 0}
-            />
-            {isTyping ? (
-              <button className="btn btn-danger chat-send-btn" onClick={cancelResponse}>
-                중지
-              </button>
-            ) : (
-              <button
-                className="btn btn-primary chat-send-btn"
-                onClick={handleSend}
-                disabled={!input.trim() || (connState === WS_STATE.DISCONNECTED && retryCount > 0)}
-              >
-                전송
-              </button>
-            )}
-          </div>
-        )}
+        <div className="chat-input-wrapper">
+          <textarea
+            ref={textareaRef}
+            className="chat-input"
+            value={input}
+            onChange={handleTextareaInput}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              connState === WS_STATE.RECONNECTING
+                ? '재연결 중... 메시지는 연결 후 자동 전송됩니다'
+                : connState === WS_STATE.DISCONNECTED
+                  ? '연결이 끊어졌습니다'
+                  : '메시지를 입력하세요... (Shift+Enter로 줄바꿈)'
+            }
+            rows={1}
+            disabled={connState === WS_STATE.DISCONNECTED && retryCount > 0}
+          />
+          {isTyping ? (
+            <button className="btn btn-danger chat-send-btn" onClick={cancelResponse}>
+              중지
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary chat-send-btn"
+              onClick={handleSend}
+              disabled={!input.trim() || (connState === WS_STATE.DISCONNECTED && retryCount > 0)}
+            >
+              전송
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

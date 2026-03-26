@@ -58,7 +58,7 @@ export const api = {
   getSession: (id) => request('GET', `/sessions/${id}`),
   deleteSession: (id) => request('DELETE', `/sessions/${id}`),
   renameSession: (id, name) => request('PATCH', `/sessions/${id}/name`, { name }),
-  resumeSession: (id) => request('POST', `/sessions/${id}/resume`),
+  syncCliSessions: () => request('POST', '/sessions/sync-cli'),
   getSessionMetadata: (id) => request('GET', `/sessions/${id}/metadata`),
   deleteSessionPermanently: (id) => request('DELETE', `/sessions/${id}/permanent`),
   getMessages: (id, page = 1, limit = 50) =>
@@ -119,21 +119,6 @@ export const api = {
   deleteSshProfile: (id) => request('DELETE', `/ssh-profiles/${id}`),
   testSshProfile: (id) => request('POST', `/ssh-profiles/${id}/test`),
   browseSshProfile: (id, path) => request('POST', `/ssh-profiles/${id}/browse`, { path }),
-
-  // CLI Sessions
-  getCliSessions: (params = {}) => {
-    const qs = new URLSearchParams();
-    if (params.project) qs.set('project', params.project);
-    if (params.find) qs.set('find', params.find);
-    if (params.limit) qs.set('limit', params.limit);
-    if (params.sort) qs.set('sort', params.sort);
-    if (params.refresh) qs.set('refresh', '1');
-    const query = qs.toString();
-    return request('GET', `/cli-sessions${query ? '?' + query : ''}`);
-  },
-  getCliSessionStats: (refresh) => request('GET', `/cli-sessions/stats${refresh ? '?refresh=1' : ''}`),
-  adoptCliSession: (body) => request('POST', '/cli-sessions/adopt', body),
-  deleteCliSession: (sessionId) => request('DELETE', `/cli-sessions/${sessionId}`),
 
   // Logs
   getLogs: (page = 1, limit = 50, action) => {

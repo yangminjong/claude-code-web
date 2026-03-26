@@ -1,5 +1,5 @@
 import { resolve } from 'path';
-import { mkdirSync, statSync } from 'fs';
+import { mkdirSync, statSync, existsSync, readdirSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { getDb } from '../db/connection.js';
 import { cleanupSession, cancelProcess } from './processManager.js';
@@ -8,23 +8,9 @@ import { getProfile, validateRemotePath } from './sshProfileManager.js';
 import { deleteClaudeCliSession } from '../utils/claudeSessionCleaner.js';
 
 const WORKSPACE_ROOT = () => resolve(process.env.WORKSPACE_ROOT || '../workspace');
-const MAX_SESSIONS = () => parseInt(process.env.MAX_SESSIONS_PER_USER || '3', 10);
-const IDLE_TIMEOUT = () => parseInt(process.env.IDLE_TIMEOUT_MINUTES || '30', 10) * 60 * 1000;
 
 export function createSession(userId, { name, workMode = 'server', projectPath = 'default', sshProfileId = null, absoluteWorkDir = null }) {
   const db = getDb();
-
-  // Check session limit
-  const activeCount = db.prepare(
-    "SELECT COUNT(*) as count FROM sessions WHERE user_id = ? AND status IN ('active', 'idle')"
-  ).get(userId).count;
-
-  if (activeCount >= MAX_SESSIONS()) {
-    const err = new Error(`최대 동시 세션 수(${MAX_SESSIONS()})를 초과했습니다`);
-    err.code = 'SESSION_LIMIT_EXCEEDED';
-    err.status = 429;
-    throw err;
-  }
 
   let workDir;
 
@@ -78,7 +64,7 @@ export function createSession(userId, { name, workMode = 'server', projectPath =
   return db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
 }
 
-export function destroySession(sessionId, userId = null) {
+export function stopSession(sessionId, userId = null) {
   const db = getDb();
   const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
   if (!session) return null;
@@ -86,11 +72,7 @@ export function destroySession(sessionId, userId = null) {
   // Cancel any running process
   cleanupSession(sessionId);
 
-  db.prepare(
-    "UPDATE sessions SET status = 'ended', ended_at = CURRENT_TIMESTAMP WHERE id = ?"
-  ).run(sessionId);
-
-  auditLog(userId || session.user_id, 'session_end', { sessionId });
+  auditLog(userId || session.user_id, 'session_stop', { sessionId });
 
   return session;
 }
@@ -121,34 +103,6 @@ export function updateSessionName(sessionId, name) {
 
 export function updateClaudeSessionId(sessionId, claudeSessionId) {
   getDb().prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(claudeSessionId, sessionId);
-}
-
-export function resumeSession(sessionId, userId) {
-  const db = getDb();
-  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
-  if (!session) return null;
-  if (session.user_id !== userId) return null;
-
-  // Check session limit
-  const activeCount = db.prepare(
-    "SELECT COUNT(*) as count FROM sessions WHERE user_id = ? AND status IN ('active', 'idle')"
-  ).get(userId).count;
-
-  if (activeCount >= MAX_SESSIONS()) {
-    const err = new Error(`최대 동시 세션 수(${MAX_SESSIONS()})를 초과했습니다`);
-    err.code = 'SESSION_LIMIT_EXCEEDED';
-    err.status = 429;
-    throw err;
-  }
-
-  // Reactivate
-  db.prepare(
-    "UPDATE sessions SET status = 'active', ended_at = NULL, last_activity_at = CURRENT_TIMESTAMP WHERE id = ?"
-  ).run(sessionId);
-
-  auditLog(userId, 'session_resume', { sessionId });
-
-  return db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
 }
 
 export function addMessage(sessionId, role, content, parentMessageId = null) {
@@ -374,23 +328,111 @@ export function getSessionMetadata(sessionId) {
   };
 }
 
-// Idle timeout checker — marks inactive sessions as ended
-export function startHeartbeatChecker() {
-  const interval = parseInt(process.env.HEARTBEAT_INTERVAL_SEC || '30', 10) * 1000;
+/**
+ * Sync CLI sessions from ~/.claude/projects/ into DB.
+ * Scans JSONL files, creates DB records for sessions not yet tracked.
+ */
+export function syncCliSessions(userId) {
+  const db = getDb();
+  const HOME = process.env.HOME || '/home/' + (process.env.USER || 'root');
+  const PROJECTS_DIR = resolve(HOME, '.claude/projects');
 
-  setInterval(() => {
-    const db = getDb();
-    const activeSessions = db.prepare(
-      "SELECT * FROM sessions WHERE status IN ('active', 'idle')"
-    ).all();
+  if (!existsSync(PROJECTS_DIR)) return { imported: 0 };
 
-    const now = Date.now();
+  // Get user info for workspace filtering
+  const user = db.prepare('SELECT email FROM users WHERE id = ?').get(userId);
+  if (!user) return { imported: 0 };
+  const username = user.email.split('@')[0];
+  const userRoot = resolve(WORKSPACE_ROOT(), username);
 
-    for (const session of activeSessions) {
-      const lastActivity = new Date(session.last_activity_at).getTime();
-      if (now - lastActivity > IDLE_TIMEOUT()) {
-        destroySession(session.id);
-      }
+  // Get existing claude_session_ids for this user
+  const existingIds = new Set(
+    db.prepare('SELECT claude_session_id FROM sessions WHERE user_id = ? AND claude_session_id IS NOT NULL')
+      .all(userId)
+      .map(r => r.claude_session_id)
+  );
+
+  let imported = 0;
+  let projectDirs;
+  try {
+    projectDirs = readdirSync(PROJECTS_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+  } catch {
+    return { imported: 0 };
+  }
+
+  const insertStmt = db.prepare(
+    'INSERT INTO sessions (user_id, name, work_mode, project_path, status, claude_session_id) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+
+  for (const encodedDir of projectDirs) {
+    const dirPath = resolve(PROJECTS_DIR, encodedDir);
+    const projectPath = encodedDir.replace(/^-/, '/').replace(/-/g, '/');
+
+    // Only import sessions from this user's workspace
+    if (!projectPath.startsWith(userRoot)) continue;
+
+    let jsonlFiles;
+    try {
+      jsonlFiles = readdirSync(dirPath).filter(f => f.endsWith('.jsonl') && !f.includes('/'));
+    } catch { continue; }
+
+    for (const file of jsonlFiles) {
+      const sessionId = file.replace('.jsonl', '');
+      if (existingIds.has(sessionId)) continue;
+
+      const filePath = resolve(dirPath, file);
+      const name = extractSessionName(filePath);
+
+      insertStmt.run(userId, name, 'server', projectPath, 'active', sessionId);
+      imported++;
     }
-  }, interval);
+  }
+
+  return { imported };
+}
+
+/**
+ * Extract a session name from a JSONL file (customTitle > lastPrompt > first user message).
+ */
+function extractSessionName(filePath) {
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n');
+    let name = '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let obj;
+      try { obj = JSON.parse(trimmed); } catch { continue; }
+
+      if (!name && obj.type === 'user' && obj.message?.role === 'user') {
+        const msgContent = obj.message.content;
+        if (typeof msgContent === 'string') name = msgContent.slice(0, 50);
+        else if (Array.isArray(msgContent)) {
+          const textBlock = msgContent.find(b => b.type === 'text');
+          if (textBlock?.text) name = textBlock.text.slice(0, 50);
+        }
+      }
+      if (obj.type === 'custom-title' && obj.customTitle) name = obj.customTitle;
+      if (obj.type === 'last-prompt' && obj.lastPrompt && !name) name = obj.lastPrompt.slice(0, 50);
+    }
+
+    // Re-scan end for custom-title / last-prompt
+    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 5); i--) {
+      const trimmed = lines[i]?.trim();
+      if (!trimmed) continue;
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj.type === 'custom-title' && obj.customTitle) { name = obj.customTitle; break; }
+        if (obj.type === 'last-prompt' && obj.lastPrompt) { name = obj.lastPrompt.slice(0, 50); break; }
+      } catch {}
+    }
+
+    return name || '(untitled)';
+  } catch {
+    return '(untitled)';
+  }
 }

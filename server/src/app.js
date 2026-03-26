@@ -7,14 +7,12 @@ import { fileURLToPath } from 'url';
 import { existsSync } from 'fs';
 import { getDb, closeDb } from './db/connection.js';
 import { setupWebSocket } from './ws/wsServer.js';
-import { startHeartbeatChecker } from './services/sessionManager.js';
 import { cleanupAllMounts } from './services/processManager.js';
 import authRoutes from './routes/auth.js';
 import sessionRoutes from './routes/sessions.js';
 import fileRoutes from './routes/files.js';
 import logRoutes from './routes/logs.js';
 import sshProfileRoutes from './routes/sshProfiles.js';
-import cliSessionRoutes from './routes/cliSessions.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -38,7 +36,6 @@ app.use('/api/sessions', sessionRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/logs', logRoutes);
 app.use('/api/ssh-profiles', sshProfileRoutes);
-app.use('/api/cli-sessions', cliSessionRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -87,7 +84,6 @@ console.log('[server] Database initialized');
 
 const server = createServer(app);
 setupWebSocket(server);
-startHeartbeatChecker();
 
 server.listen(PORT, () => {
   console.log(`[server] Claude Code Web server running on port ${PORT}`);

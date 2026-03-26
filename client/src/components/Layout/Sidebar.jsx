@@ -1,36 +1,24 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.js';
 import { useSessionStore } from '../../stores/sessionStore.js';
 import { useExplorerStore } from '../../stores/explorerStore.js';
+import { useEditorStore } from '../../stores/editorStore.js';
 import SessionList from '../Session/SessionList.jsx';
-import CliSessionList from '../Session/CliSessionList.jsx';
 import NewSessionModal from '../Session/NewSessionModal.jsx';
 import UserAvatar from '../Chat/UserAvatar.jsx';
 
-export default function Sidebar({ open, onToggle, sidebarTab, onSidebarTabChange }) {
+export default function Sidebar({ open, onToggle }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const { fetchSessions } = useSessionStore();
+  const { setActiveSession } = useSessionStore();
   const { open: explorerOpen, toggleOpen: toggleExplorer } = useExplorerStore();
   const [showNewSession, setShowNewSession] = useState(false);
-  const [tab, setTab] = useState(sidebarTab || 'mine');
 
-  useEffect(() => {
-    fetchSessions();
-  }, []);
-
-  useEffect(() => {
-    if (sidebarTab && sidebarTab !== tab) {
-      setTab(sidebarTab);
-    }
-  }, [sidebarTab]);
-
-  const handleTabChange = useCallback((newTab) => {
-    setTab(newTab);
-    if (onSidebarTabChange) onSidebarTabChange(newTab);
-  }, [onSidebarTabChange]);
+  const handleNewChat = () => {
+    setShowNewSession(true);
+  };
 
   return (
     <>
@@ -45,28 +33,12 @@ export default function Sidebar({ open, onToggle, sidebarTab, onSidebarTabChange
         {open && (
           <>
             <div className="sidebar-actions">
-              <button className="btn btn-primary btn-sm btn-full" onClick={() => setShowNewSession(true)}>
-                + 새 세션
+              <button className="btn btn-primary btn-sm btn-full" onClick={handleNewChat}>
+                + 새 작업
               </button>
             </div>
 
-            <div className="sidebar-tabs">
-              <button
-                className={`sidebar-tab-btn ${tab === 'mine' ? 'active' : ''}`}
-                onClick={() => handleTabChange('mine')}
-              >
-                내 세션
-              </button>
-              <button
-                className={`sidebar-tab-btn ${tab === 'cli' ? 'active' : ''}`}
-                onClick={() => handleTabChange('cli')}
-              >
-                CLI 히스토리
-              </button>
-            </div>
-
-            {tab === 'mine' && <SessionList />}
-            {tab === 'cli' && <CliSessionList />}
+            <SessionList />
 
             <nav className="sidebar-nav">
               <button

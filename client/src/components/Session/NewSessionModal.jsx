@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSessionStore } from '../../stores/sessionStore.js';
+import { useEditorStore } from '../../stores/editorStore.js';
 import { useSshProfileStore } from '../../stores/sshProfileStore.js';
+import { api } from '../../api/client.js';
 import RemoteFolderBrowser from '../Settings/RemoteFolderBrowser.jsx';
 import toast from 'react-hot-toast';
 
@@ -9,16 +11,20 @@ export default function NewSessionModal({ onClose }) {
   const { createSession, setActiveSession } = useSessionStore();
   const { profiles, fetchProfiles } = useSshProfileStore();
   const navigate = useNavigate();
-  const [name, setName] = useState('');
   const [workMode, setWorkMode] = useState('server');
   const [projectPath, setProjectPath] = useState('default');
   const [sshProfileId, setSshProfileId] = useState('');
   const [loading, setLoading] = useState(false);
+  const [folders, setFolders] = useState([]);
   const [showBrowser, setShowBrowser] = useState(false);
 
   useEffect(() => {
     fetchProfiles();
-  }, [fetchProfiles]);
+    // Load workspace folders
+    api.listFiles('.').then(({ items }) => {
+      setFolders(items.filter(i => i.isDirectory).map(i => i.name));
+    }).catch(() => {});
+  }, []);
 
   const selectedProfile = profiles.find(p => String(p.id) === sshProfileId);
 
@@ -31,15 +37,15 @@ export default function NewSessionModal({ onClose }) {
     setLoading(true);
     try {
       const session = await createSession(
-        name,
+        '새 작업',
         workMode,
-        projectPath,
+        projectPath || 'default',
         workMode === 'ssh' ? parseInt(sshProfileId, 10) : null
       );
       setActiveSession(session.id);
+      useEditorStore.getState().showChat();
       navigate('/');
       onClose();
-      toast.success('세션이 생성되었습니다');
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -51,21 +57,10 @@ export default function NewSessionModal({ onClose }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>새 세션</h3>
+          <h3>새 작업</h3>
           <button className="btn-icon" onClick={onClose}>&times;</button>
         </div>
         <form onSubmit={handleSubmit} className="modal-body">
-          <div className="form-group">
-            <label htmlFor="sessionName">세션 이름 <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>(선택)</span></label>
-            <input
-              id="sessionName"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="비워두면 첫 메시지로 자동 설정됩니다"
-              autoFocus
-            />
-          </div>
           <div className="form-group">
             <label>작업 모드</label>
             <div className="mode-toggle">
@@ -109,47 +104,74 @@ export default function NewSessionModal({ onClose }) {
           )}
 
           <div className="form-group">
-            <label htmlFor="projectPath">
-              {workMode === 'ssh' ? '원격 프로젝트 경로' : '프로젝트 경로'}
+            <label>
+              {workMode === 'ssh' ? '원격 프로젝트 경로' : '프로젝트 폴더'}
             </label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input
-                id="projectPath"
-                type="text"
-                value={projectPath}
-                onChange={(e) => setProjectPath(e.target.value)}
-                placeholder={workMode === 'ssh'
-                  ? (selectedProfile?.remote_os === 'windows' ? 'C:\\Users\\user\\project' : '/home/ubuntu/project')
-                  : 'default'
-                }
-                required={workMode === 'ssh'}
-                style={{ flex: 1 }}
-              />
-              {workMode === 'ssh' && sshProfileId && (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setShowBrowser(true)}
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  찾아보기
-                </button>
-              )}
-            </div>
-            {workMode === 'server' && (
-              <span className="form-hint">workspaces/{'{username}'}/{projectPath} 에 생성됩니다</span>
-            )}
-            {workMode === 'ssh' && (
-              <span className="form-hint">
-                원격 서버의 절대 경로를 입력하거나 찾아보기로 선택하세요
-                {selectedProfile?.remote_os === 'windows' && ' (Windows 경로)'}
-              </span>
+
+            {workMode === 'server' ? (
+              <>
+                <div className="folder-grid">
+                  {folders.map(f => (
+                    <button
+                      key={f}
+                      type="button"
+                      className={`folder-btn ${projectPath === f ? 'active' : ''}`}
+                      onClick={() => setProjectPath(f)}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className={`folder-btn new ${!folders.includes(projectPath) && projectPath !== 'default' ? 'active' : ''}`}
+                    onClick={() => setProjectPath('')}
+                  >
+                    + 새 폴더
+                  </button>
+                </div>
+                {(!folders.includes(projectPath) && projectPath !== 'default') || projectPath === '' ? (
+                  <input
+                    type="text"
+                    value={projectPath}
+                    onChange={(e) => setProjectPath(e.target.value)}
+                    placeholder="폴더 이름 입력"
+                    autoFocus
+                    style={{ marginTop: '8px' }}
+                  />
+                ) : null}
+                <span className="form-hint">workspaces/{projectPath || '...'} 에서 작업합니다</span>
+              </>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    value={projectPath}
+                    onChange={(e) => setProjectPath(e.target.value)}
+                    placeholder={selectedProfile?.remote_os === 'windows' ? 'C:\\Users\\user\\project' : '/home/ubuntu/project'}
+                    required
+                    style={{ flex: 1 }}
+                  />
+                  {sshProfileId && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setShowBrowser(true)}
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
+                      찾아보기
+                    </button>
+                  )}
+                </div>
+                <span className="form-hint">원격 서버의 절대 경로를 입력하세요</span>
+              </>
             )}
           </div>
+
           <div className="modal-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>취소</button>
             <button type="submit" className="btn btn-primary" disabled={loading || (workMode === 'ssh' && profiles.length === 0)}>
-              {loading ? '생성 중...' : '세션 생성'}
+              {loading ? '생성 중...' : '대화 시작'}
             </button>
           </div>
         </form>

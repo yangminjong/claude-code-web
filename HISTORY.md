@@ -4,6 +4,56 @@
 
 ## 2026-03-26
 
+### 13. [v2.7.6] 통합 세션 리스트
+
+"내 세션"과 "CLI 히스토리" 2개 탭을 하나의 프로젝트별 그룹 리스트로 통합. 세션 상태(active/idle/ended) 개념을 제거하고, 모든 세션이 stateless로 동작.
+
+**핵심 변경:**
+- 사이드바 탭(내 세션/CLI 히스토리) 제거 → 단일 세션 리스트
+- 세션을 프로젝트 경로(폴더)별로 그룹핑, 접기/펼치기 지원
+- CLI 세션 자동 동기화: `~/.claude/projects/` JSONL 파일을 스캔하여 DB에 자동 import
+- 세션 상태 제거: resume/adopt 흐름 불필요 — 클릭 → 메시지 전송 → `--resume` 자동 적용
+- 세션 없이 메시지 전송 시 자동으로 세션 생성 (빈 채팅 화면에서 바로 대화 시작)
+- heartbeat 기반 idle timeout 제거 (프로세스는 매 메시지마다 spawn/종료, 이미 stateless)
+
+**제거된 것:**
+- `CliSessionList.jsx`, `CliSessionItem.jsx`, `CliSessionDetail.jsx` — CLI 세션 UI 전체
+- `cliSessionStore.js` — CLI 세션 Zustand 스토어
+- `cliSessions.js` 라우트 — CLI 세션 API 전체 (`/api/cli-sessions/*`)
+- `resumeSession()` — 서버/클라이언트 양쪽
+- `startHeartbeatChecker()` — idle timeout 관리
+- `destroySession()` → `stopSession()`으로 단순화 (프로세스 정리만, 상태 변경 없음)
+- ChatWindow의 "세션이 종료되었습니다" + "이어서 대화" UI
+- 사이드바 탭 전환 로직, AppShell의 CLI 세션 라우트
+
+**추가된 것:**
+- `POST /api/sessions/sync-cli` — CLI 세션 DB 동기화 엔드포인트
+- `syncCliSessions(userId)` — `~/.claude/projects/` 스캔 + DB insert
+- ChatWindow에서 세션 없이 첫 메시지 전송 시 자동 세션 생성
+- `activateSession(id)` — messages 유지하면서 activeSessionId만 변경 (자동 생성 시 메시지 소멸 방지)
+- 새 작업 모달: 워크스페이스 폴더 목록을 버튼 그리드로 표시, 클릭 선택 + 새 폴더 입력
+
+**용어 변경:**
+- "새 대화" / "새 채팅" → "새 작업" (코드 작업 도구의 목적에 맞게)
+
+**변경 파일:**
+- `server/src/services/sessionManager.js` — resumeSession/heartbeat 제거, syncCliSessions 추가
+- `server/src/routes/sessions.js` — resume 라우트 제거, sync-cli 추가, 기본 이름 "새 작업"
+- `server/src/app.js` — heartbeat/CLI 라우트 제거
+- `server/src/ws/wsHandler.js` — 자동 이름 감지 기준 "새 작업"
+- `client/src/stores/sessionStore.js` — resumeSession 제거, syncCliSessions/activateSession 추가
+- `client/src/api/client.js` — CLI API 제거, syncCliSessions 추가
+- `client/src/components/Session/SessionList.jsx` — 프로젝트별 그룹 리스트로 재작성
+- `client/src/components/Session/SessionItem.jsx` — 상태 dot 제거, 시간 표시 추가
+- `client/src/components/Session/NewSessionModal.jsx` — 워크스페이스 폴더 선택 그리드, 간소화
+- `client/src/components/Layout/Sidebar.jsx` — 탭 제거, "+ 새 작업" 버튼
+- `client/src/components/Layout/AppShell.jsx` — CLI 라우트/탭 상태 제거
+- `client/src/components/Chat/ChatWindow.jsx` — resume UI 제거, 자동 세션 생성
+- `client/src/components/Session/Session.css` — 상태/CLI 스타일 정리, 폴더 그리드 추가
+- `client/src/components/Layout/Layout.css` — 탭 스타일 제거
+
+---
+
 ### 12. [v2.7.5] Workspace 경로 분리
 
 기존 `workspace/`가 `claude-code-web/` Git 저장소 내부에 위치하여, 사용자 워크스페이스에서 Claude Code 실행 시 상위 앱의 `.git`을 인식하는 문제 해결. 사용자 데이터를 Git 저장소 밖으로 분리.

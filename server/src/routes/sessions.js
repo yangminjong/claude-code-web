@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/authenticate.js';
 import {
-  createSession, destroySession, getUserSessions,
-  getSession, getSessionMessages, updateSessionName, resumeSession,
-  deleteSessionPermanently, getSessionMetadata,
+  createSession, stopSession, getUserSessions,
+  getSession, getSessionMessages, updateSessionName,
+  deleteSessionPermanently, getSessionMetadata, syncCliSessions,
   getMessageTree, getActivePath, getBranchSelections, setBranchSelection,
   getMessageChildren
 } from '../services/sessionManager.js';
@@ -26,20 +26,25 @@ router.post('/', authenticate, (req, res) => {
   try {
     const { name, workMode, projectPath, sshProfileId } = req.body;
     const session = createSession(req.user.id, {
-      name: name || '새 채팅',
+      name: name || '새 작업',
       workMode: workMode || 'server',
       projectPath: projectPath || 'default',
       sshProfileId: sshProfileId || null
     });
     res.status(201).json({ ok: true, data: { session } });
   } catch (err) {
-    if (err.code === 'SESSION_LIMIT_EXCEEDED') {
-      return res.status(err.status).json({
-        ok: false,
-        error: { code: err.code, message: err.message }
-      });
-    }
     console.error('[sessions] Create error:', err);
+    res.status(err.status || 500).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message || '서버 오류' } });
+  }
+});
+
+// POST /api/sessions/sync-cli — sync CLI sessions into DB
+router.post('/sync-cli', authenticate, (req, res) => {
+  try {
+    const result = syncCliSessions(req.user.id);
+    res.json({ ok: true, data: result });
+  } catch (err) {
+    console.error('[sessions] CLI sync error:', err);
     res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
   }
 });
@@ -98,30 +103,7 @@ router.patch('/:id/name', authenticate, (req, res) => {
   }
 });
 
-// POST /api/sessions/:id/resume — resume ended session
-router.post('/:id/resume', authenticate, (req, res) => {
-  try {
-    const session = resumeSession(parseInt(req.params.id, 10), req.user.id);
-    if (!session) {
-      return res.status(404).json({
-        ok: false,
-        error: { code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없거나 권한이 없습니다' }
-      });
-    }
-    res.json({ ok: true, data: { session } });
-  } catch (err) {
-    if (err.code === 'SESSION_LIMIT_EXCEEDED') {
-      return res.status(err.status).json({
-        ok: false,
-        error: { code: err.code, message: err.message }
-      });
-    }
-    console.error('[sessions] Resume error:', err);
-    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
-  }
-});
-
-// DELETE /api/sessions/:id — end session
+// DELETE /api/sessions/:id — stop session process
 router.delete('/:id', authenticate, (req, res) => {
   try {
     const session = getSession(parseInt(req.params.id, 10));
@@ -137,7 +119,7 @@ router.delete('/:id', authenticate, (req, res) => {
         error: { code: 'FORBIDDEN', message: '다른 사용자의 세션을 종료할 수 없습니다' }
       });
     }
-    destroySession(session.id, req.user.id);
+    stopSession(session.id, req.user.id);
     res.json({ ok: true, data: { ok: true } });
   } catch (err) {
     console.error('[sessions] Delete error:', err);

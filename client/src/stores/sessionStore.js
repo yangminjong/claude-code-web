@@ -20,6 +20,13 @@ export const useSessionStore = create((set, get) => ({
     }
   },
 
+  syncCliSessions: async () => {
+    try {
+      await api.syncCliSessions();
+      await get().fetchSessions();
+    } catch {}
+  },
+
   createSession: async (name, workMode = 'server', projectPath = 'default', sshProfileId = null) => {
     const { session } = await api.createSession({ name, workMode, projectPath, sshProfileId });
     set((s) => ({ sessions: [session, ...s.sessions] }));
@@ -45,6 +52,11 @@ export const useSessionStore = create((set, get) => ({
         } catch {}
       }
     }
+  },
+
+  // Set activeSessionId without clearing messages (for auto-create flow)
+  activateSession: (id) => {
+    set({ activeSessionId: id });
   },
 
   // Reload active path and tree after branch changes
@@ -92,17 +104,6 @@ export const useSessionStore = create((set, get) => ({
       activeSessionId: s.activeSessionId === id ? null : s.activeSessionId,
       messages: s.activeSessionId === id ? [] : s.messages
     }));
-  },
-
-  resumeSession: async (id) => {
-    const { session } = await api.resumeSession(id);
-    set((s) => ({
-      sessions: s.sessions.map(sess =>
-        sess.id === id ? session : sess
-      ),
-      activeSessionId: id
-    }));
-    return session;
   },
 
   renameSession: (id, name) => {

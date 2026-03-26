@@ -45,6 +45,12 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, data: { status: 'running' } });
 });
 
+// Serve static assets (character images, etc.)
+const dataImageDir = resolve(__dirname, '../../data/image');
+if (existsSync(dataImageDir)) {
+  app.use('/assets/image', express.static(dataImageDir, { maxAge: '7d' }));
+}
+
 // Serve static client build in production
 const clientDist = resolve(__dirname, '../../client/dist');
 if (existsSync(clientDist)) {

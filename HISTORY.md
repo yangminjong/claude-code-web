@@ -2,6 +2,60 @@
 
 ---
 
+## 2026-03-25
+
+### 10. [v2.7.3] WebSocket 재연결 강화 + messageId 기반 요청-응답 매칭
+
+네트워크 불안정 시 응답이 뒤섞이는 심각한 버그를 해결. 기존에는 messageId 없이 응답을 "현재 질문의 답"으로 가정하여, WS 끊김 후 이전 응답이 새 질문 밑에 표시되는 문제가 있었음.
+
+**근본 원인:**
+- 기존: 서버가 `assistant_chunk`를 보내면 클라이언트가 단순히 현재 질문의 답으로 표시
+- WS 끊김 → 재연결 시 이전 응답이 새 질문에 매칭되는 race condition
+- 예: "1+1?" → "2" 정상 → "3+3" → "2" (이전 답 밀림) → "야" → "6입니다" (뒤늦게 정답)
+
+**messageId 기반 요청-응답 매칭:**
+- 클라이언트가 매 메시지에 고유 `messageId` 생성 (`msg_{timestamp}_{counter}`)
+- 서버가 모든 응답 이벤트(assistant_start/chunk/end/error)에 동일 messageId 태깅
+- 클라이언트가 `activeMessageIdRef`와 불일치하는 stale 응답을 무시 (console 로그)
+- 서버 `activeConnections` 맵에 `activeMessageId` 보관, 재연결 시 올바른 messageId로 복구
+
+**Exponential backoff 재연결:**
+- 초기 1초 → 2배씩 증가 → 최대 30초, 최대 20회 시도
+- 10% jitter로 thundering herd 방지
+- 의도적 종료(세션 전환)와 비정상 종료 구분
+
+**안정성 타이머:**
+- 연결 성공 후 retryCount를 즉시 0으로 리셋하지 않고, 5초간 안정 유지 후에만 리셋
+- connect → 즉시 끊김 → 1초 재연결 → 반복하는 1초 루프 버그 방지
+
+**메시지 큐:**
+- WS 연결 안 됐을 때 보낸 메시지를 `messageQueueRef`에 버퍼링
+- 연결 성공(`connected` 이벤트) 시 자동으로 flush (첫 메시지 씹힘 해결)
+
+**서버 응답 복구:**
+- `activeConnections` 맵: 세션별 현재 WS + 진행 중 프로세스 + 누적 응답 추적
+- 프로세스 실행 중 WS 끊김 → 출력을 계속 `fullResponse`에 버퍼링
+- 재연결 시 `assistant_start` + 누적 `assistant_chunk`를 새 WS로 전송
+- 프로세스가 WS 끊긴 사이에 완료 → `unsentEnd`에 응답 보관 (60초 만료)
+- 재연결 시 `unsentEnd` 전달 후 정리
+
+**서버 버그 수정:**
+- `existing.ws`가 null일 때 `removeAllListeners()` 호출 시 TypeError 크래시 → null 가드 추가
+
+**연결 상태 UI:**
+- 헤더 상태 배지: 연결됨(초록) / 연결 중(노랑) / 재연결 중(노랑 pulse) / 연결 끊김(빨강)
+- 재연결 중 배너: 스피너 + "재연결 시도 중... (N회)"
+- 재연결 실패 배너: "연결에 실패했습니다." + "다시 연결" 버튼
+- 재연결 중에도 메시지 입력 가능 (큐에 저장됨), placeholder 안내 문구 변경
+
+**변경 파일:**
+- `client/src/hooks/useWebSocket.js` — 전면 재작성
+- `server/src/ws/wsHandler.js` — activeConnections, messageId, safeSend, 응답 복구
+- `client/src/components/Chat/ChatWindow.jsx` — connState/retryCount UI, 배너
+- `client/src/components/Chat/Chat.css` — 상태 스타일, pulse 애니메이션, 스피너
+
+---
+
 ## 2026-03-24
 
 ### 9. [v2.7.2] 파일 에디터 (Monaco Editor)

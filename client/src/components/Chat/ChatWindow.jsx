@@ -218,7 +218,7 @@ export default function ChatWindow() {
         {/* Thinking indicator */}
         {thinking && !streamingText && (
           <div className="message assistant">
-            <div className="message-avatar"><ClaudeAvatar size={32} /></div>
+            <div className="message-avatar"><ClaudeAvatar size={32} isAnimated /></div>
             <div className="message-body">
               <div className="thinking-indicator">
                 <span className="dot" /><span className="dot" /><span className="dot" />

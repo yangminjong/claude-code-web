@@ -30,7 +30,7 @@ export default function MessageBubble({ role, content, isStreaming }) {
   return (
     <div className={`message ${role}`}>
       <div className="message-avatar">
-        {role === 'user' ? <UserAvatar size={32} /> : <ClaudeAvatar size={32} />}
+        {role === 'user' ? <UserAvatar size={32} /> : <ClaudeAvatar size={32} isAnimated={!!isStreaming} />}
       </div>
       <div className="message-body">
         <div className={`message-bubble ${isStreaming ? 'streaming' : ''}`}>

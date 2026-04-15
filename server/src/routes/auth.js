@@ -7,6 +7,7 @@ import { getDb } from '../db/connection.js';
 import { signToken } from '../utils/jwt.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { auditLog } from '../services/auditLogger.js';
+import { generateCode, sendVerificationEmail } from '../utils/mailer.js';
 
 const router = Router();
 const ALLOWED_THEMES = new Set(['dark', 'dimmed', 'light', 'solarized', 'nord', 'monokai']);
@@ -37,23 +38,47 @@ router.post('/register', async (req, res) => {
     }
 
     const db = getDb();
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
-    if (existing) {
+    const existing = db.prepare('SELECT id, email_verified FROM users WHERE email = ?').get(email);
+
+    if (existing && existing.email_verified) {
       return res.status(409).json({
         ok: false,
         error: { code: 'DUPLICATE_EMAIL', message: '이미 등록된 이메일입니다' }
       });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
-    const result = db.prepare(
-      'INSERT INTO users (email, password_hash, display_name) VALUES (?, ?, ?)'
-    ).run(email, passwordHash, displayName);
+    let userId;
+    if (existing && !existing.email_verified) {
+      // Re-register: update password/displayName for unverified user
+      const passwordHash = await bcrypt.hash(password, 10);
+      db.prepare('UPDATE users SET password_hash = ?, display_name = ? WHERE id = ?')
+        .run(passwordHash, displayName, existing.id);
+      userId = existing.id;
+    } else {
+      const passwordHash = await bcrypt.hash(password, 10);
+      const result = db.prepare(
+        'INSERT INTO users (email, password_hash, display_name, email_verified) VALUES (?, ?, ?, 0)'
+      ).run(email, passwordHash, displayName);
+      userId = result.lastInsertRowid;
+    }
 
-    const user = { id: result.lastInsertRowid, email, displayName, avatarUrl: null, theme: 'dark' };
-    const token = signToken({ userId: user.id });
+    // Invalidate previous codes
+    db.prepare('UPDATE email_verifications SET used = 1 WHERE email = ? AND used = 0').run(email);
 
-    res.status(201).json({ ok: true, data: { user, token } });
+    // Generate and send verification code
+    const code = generateCode();
+    const expireMinutes = parseInt(process.env.EMAIL_VERIFY_EXPIRE_MINUTES || '10', 10);
+    const expiresAt = new Date(Date.now() + expireMinutes * 60 * 1000).toISOString();
+    db.prepare('INSERT INTO email_verifications (email, code, expires_at) VALUES (?, ?, ?)')
+      .run(email, code, expiresAt);
+
+    await sendVerificationEmail(email, code);
+    auditLog(userId, 'register', { email }, req.ip);
+
+    res.status(201).json({
+      ok: true,
+      data: { needsVerification: true, email }
+    });
   } catch (err) {
     console.error('[auth] Register error:', err);
     res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
@@ -76,6 +101,13 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    if (!user.email_verified) {
+      return res.status(403).json({
+        ok: false,
+        error: { code: 'EMAIL_NOT_VERIFIED', message: '이메일 인증이 필요합니다' }
+      });
+    }
+
     db.prepare('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
     auditLog(user.id, 'login', {}, ip);
 
@@ -95,6 +127,126 @@ router.post('/login', async (req, res) => {
     });
   } catch (err) {
     console.error('[auth] Login error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// POST /api/auth/verify-email
+router.post('/verify-email', async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '이메일과 인증 코드를 입력해주세요' }
+      });
+    }
+
+    const db = getDb();
+    const verification = db.prepare(
+      'SELECT * FROM email_verifications WHERE email = ? AND code = ? AND used = 0 ORDER BY created_at DESC LIMIT 1'
+    ).get(email, code);
+
+    if (!verification) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'INVALID_CODE', message: '유효하지 않은 인증 코드입니다' }
+      });
+    }
+
+    if (new Date(verification.expires_at) < new Date()) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'CODE_EXPIRED', message: '인증 코드가 만료되었습니다. 재발송해주세요' }
+      });
+    }
+
+    // Mark code as used and verify user
+    db.prepare('UPDATE email_verifications SET used = 1 WHERE id = ?').run(verification.id);
+    db.prepare('UPDATE users SET email_verified = 1 WHERE email = ?').run(email);
+
+    // Auto-login after verification
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    const token = signToken({ userId: user.id });
+    db.prepare('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+    auditLog(user.id, 'email_verified', { email }, req.ip);
+
+    res.json({
+      ok: true,
+      data: {
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.display_name,
+          avatarUrl: user.avatar_url || null,
+          theme: user.theme || 'dark'
+        },
+        token
+      }
+    });
+  } catch (err) {
+    console.error('[auth] Verify email error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// POST /api/auth/resend-verification
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message: '이메일을 입력해주세요' }
+      });
+    }
+
+    const db = getDb();
+    const user = db.prepare('SELECT id, email_verified FROM users WHERE email = ?').get(email);
+
+    if (!user) {
+      // Don't reveal whether user exists
+      return res.json({ ok: true, data: { sent: true } });
+    }
+
+    if (user.email_verified) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'ALREADY_VERIFIED', message: '이미 인증된 이메일입니다' }
+      });
+    }
+
+    // Rate limit: check last sent time
+    const lastSent = db.prepare(
+      'SELECT created_at FROM email_verifications WHERE email = ? ORDER BY created_at DESC LIMIT 1'
+    ).get(email);
+
+    if (lastSent) {
+      const elapsed = Date.now() - new Date(lastSent.created_at).getTime();
+      if (elapsed < 60 * 1000) {
+        return res.status(429).json({
+          ok: false,
+          error: { code: 'RATE_LIMITED', message: '1분 후에 다시 시도해주세요' }
+        });
+      }
+    }
+
+    // Invalidate previous codes
+    db.prepare('UPDATE email_verifications SET used = 1 WHERE email = ? AND used = 0').run(email);
+
+    const code = generateCode();
+    const expireMinutes = parseInt(process.env.EMAIL_VERIFY_EXPIRE_MINUTES || '10', 10);
+    const expiresAt = new Date(Date.now() + expireMinutes * 60 * 1000).toISOString();
+    db.prepare('INSERT INTO email_verifications (email, code, expires_at) VALUES (?, ?, ?)')
+      .run(email, code, expiresAt);
+
+    await sendVerificationEmail(email, code);
+
+    res.json({ ok: true, data: { sent: true } });
+  } catch (err) {
+    console.error('[auth] Resend verification error:', err);
     res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
   }
 });

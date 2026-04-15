@@ -28,6 +28,8 @@ async function request(method, path, body = null) {
 export const api = {
   // Auth
   register: (body) => request('POST', '/auth/register', body),
+  verifyEmail: (body) => request('POST', '/auth/verify-email', body),
+  resendVerification: (body) => request('POST', '/auth/resend-verification', body),
   login: (body) => request('POST', '/auth/login', body),
   logout: () => request('POST', '/auth/logout'),
   me: () => request('GET', '/auth/me'),
@@ -61,6 +63,10 @@ export const api = {
   syncCliSessions: () => request('POST', '/sessions/sync-cli'),
   getSessionMetadata: (id) => request('GET', `/sessions/${id}/metadata`),
   deleteSessionPermanently: (id) => request('DELETE', `/sessions/${id}/permanent`),
+  forkSession: (id, afterSeq, restoreCode = false) =>
+    request('POST', `/sessions/${id}/fork`, { afterSeq, restoreCode }),
+  getSiblings: (id) => request('GET', `/sessions/${id}/siblings`),
+  getBranchTree: (id) => request('GET', `/sessions/${id}/branch-tree`),
   getMessages: (id, page = 1, limit = 50) =>
     request('GET', `/sessions/${id}/messages?page=${page}&limit=${limit}`),
   getMessageTree: (id) => request('GET', `/sessions/${id}/messages/tree`),

@@ -31,10 +31,26 @@ export const useAuthStore = create((set) => ({
   },
 
   register: async (email, password, displayName) => {
-    const { user, token } = await api.register({ email, password, displayName });
+    const result = await api.register({ email, password, displayName });
+    if (result.needsVerification) {
+      return { needsVerification: true, email: result.email };
+    }
+    const { user, token } = result;
     localStorage.setItem('token', token);
     useThemeStore.getState().syncTheme(user?.theme);
     set({ user, token });
+    return { needsVerification: false };
+  },
+
+  verifyEmail: async (email, code) => {
+    const { user, token } = await api.verifyEmail({ email, code });
+    localStorage.setItem('token', token);
+    useThemeStore.getState().syncTheme(user?.theme);
+    set({ user, token });
+  },
+
+  resendVerification: async (email) => {
+    await api.resendVerification({ email });
   },
 
   logout: async () => {

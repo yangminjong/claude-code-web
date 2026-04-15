@@ -102,6 +102,23 @@ export function getDb() {
   db.exec('CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_messages_branch ON messages(session_id, parent_message_id, branch_index)');
 
+  // Email verification
+  if (!userCols.includes('email_verified')) {
+    db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0");
+    // Mark existing users as verified so they are not locked out
+    db.exec("UPDATE users SET email_verified = 1");
+  }
+
+  db.exec(`CREATE TABLE IF NOT EXISTS email_verifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    code TEXT NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email)');
+
   return db;
 }
 

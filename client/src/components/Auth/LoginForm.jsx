@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.js';
 import toast from 'react-hot-toast';
 import './Auth.css';
 
 export default function LoginForm() {
-  const { login } = useAuth();
+  const { login, resendVerification } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -16,7 +17,15 @@ export default function LoginForm() {
     try {
       await login(email, password);
     } catch (err) {
-      toast.error(err.message);
+      if (err.code === 'EMAIL_NOT_VERIFIED') {
+        toast.error('이메일 인증이 필요합니다. 인증 코드를 재발송합니다.');
+        try {
+          await resendVerification(email);
+        } catch {}
+        navigate('/register', { state: { pendingEmail: email } });
+      } else {
+        toast.error(err.message);
+      }
     } finally {
       setLoading(false);
     }

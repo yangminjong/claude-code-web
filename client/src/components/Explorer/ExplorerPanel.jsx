@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { useExplorerStore } from '../../stores/explorerStore.js';
 import ExplorerTree from './ExplorerTree.jsx';
+import WorktreePanel from './WorktreePanel.jsx';
 import UploadButton from '../Files/UploadButton.jsx';
 import { api } from '../../api/client.js';
 import toast from 'react-hot-toast';
@@ -202,6 +203,9 @@ export default function ExplorerPanel() {
           </div>
         )}
       </div>
+
+      {/* 대화 워크트리 패널 */}
+      <WorktreePanel />
     </div>
   );
 }

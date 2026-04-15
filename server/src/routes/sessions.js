@@ -3,7 +3,9 @@ import { authenticate } from '../middleware/authenticate.js';
 import {
   createSession, destroySession, getUserSessions,
   getSession, getSessionMessages, updateSessionName, resumeSession,
-  deleteSessionPermanently, getSessionMetadata
+  deleteSessionPermanently, getSessionMetadata,
+  getMessageTree, getActivePath, getBranchSelections, setBranchSelection,
+  getMessageChildren
 } from '../services/sessionManager.js';
 
 const router = Router();
@@ -208,6 +210,86 @@ router.get('/:id/messages', authenticate, (req, res) => {
     res.json({ ok: true, data: { messages, total } });
   } catch (err) {
     console.error('[sessions] Messages error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// === Conversation Branching APIs ===
+
+// GET /api/sessions/:id/messages/tree — full message tree
+router.get('/:id/messages/tree', authenticate, (req, res) => {
+  try {
+    const session = getSession(parseInt(req.params.id, 10));
+    if (!session) {
+      return res.status(404).json({ ok: false, error: { code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없습니다' } });
+    }
+    if (session.user_id !== req.user.id) {
+      return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: '접근 권한이 없습니다' } });
+    }
+    const tree = getMessageTree(session.id);
+    const selections = getBranchSelections(session.id);
+    res.json({ ok: true, data: { tree, selections } });
+  } catch (err) {
+    console.error('[sessions] Tree error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// GET /api/sessions/:id/messages/active-path — active conversation path
+router.get('/:id/messages/active-path', authenticate, (req, res) => {
+  try {
+    const session = getSession(parseInt(req.params.id, 10));
+    if (!session) {
+      return res.status(404).json({ ok: false, error: { code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없습니다' } });
+    }
+    if (session.user_id !== req.user.id) {
+      return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: '접근 권한이 없습니다' } });
+    }
+    const path = getActivePath(session.id);
+    res.json({ ok: true, data: { messages: path } });
+  } catch (err) {
+    console.error('[sessions] Active path error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// PUT /api/sessions/:id/branches — set active branch at a fork point
+router.put('/:id/branches', authenticate, (req, res) => {
+  try {
+    const session = getSession(parseInt(req.params.id, 10));
+    if (!session) {
+      return res.status(404).json({ ok: false, error: { code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없습니다' } });
+    }
+    if (session.user_id !== req.user.id) {
+      return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: '접근 권한이 없습니다' } });
+    }
+    const { parentMessageId, branchIndex } = req.body;
+    if (parentMessageId == null || branchIndex == null) {
+      return res.status(400).json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'parentMessageId와 branchIndex가 필요합니다' } });
+    }
+    setBranchSelection(session.id, parentMessageId, branchIndex);
+    const path = getActivePath(session.id);
+    res.json({ ok: true, data: { messages: path } });
+  } catch (err) {
+    console.error('[sessions] Branch select error:', err);
+    res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
+  }
+});
+
+// GET /api/sessions/:id/messages/:msgId/children — get children of a message
+router.get('/:id/messages/:msgId/children', authenticate, (req, res) => {
+  try {
+    const session = getSession(parseInt(req.params.id, 10));
+    if (!session) {
+      return res.status(404).json({ ok: false, error: { code: 'SESSION_NOT_FOUND', message: '세션을 찾을 수 없습니다' } });
+    }
+    if (session.user_id !== req.user.id) {
+      return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: '접근 권한이 없습니다' } });
+    }
+    const children = getMessageChildren(parseInt(req.params.msgId, 10));
+    res.json({ ok: true, data: { children } });
+  } catch (err) {
+    console.error('[sessions] Children error:', err);
     res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: '서버 오류' } });
   }
 });

@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "talk-to-figma": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\yangm\\work\\figma-mcp\\dist\\talk_to_figma_mcp\\server.js"
+      ]
+    },
+    "stitch": {
+      "command": "npx",
+      "args": [
+        "@_davideast/stitch-mcp",
+        "proxy"
+      ]
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": ""
+      }
+    }
+  }
+}

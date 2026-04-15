@@ -2,7 +2,7 @@ import {
   sendMessage, sendMessageSSH, getClaudeSessionId, setClaudeSessionId,
   isProcessBusy, cancelProcess
 } from '../services/processManager.js';
-import { addMessage, getSession, updateSessionName, updateClaudeSessionId } from '../services/sessionManager.js';
+import { addMessage, getSession, updateSessionName, updateClaudeSessionId, getActivePath, setBranchSelection } from '../services/sessionManager.js';
 import { getDb } from '../db/connection.js';
 import { auditLog } from '../services/auditLogger.js';
 import { getProfileWithCredential, updateLastConnected } from '../services/sshProfileManager.js';
@@ -130,7 +130,11 @@ export function handleConnection(ws, userId, sessionId) {
 
       switch (msg.type) {
         case 'message':
-          handleUserMessage(ws, sessionId, session, msg.content, msg.messageId);
+          handleUserMessage(ws, sessionId, session, msg.content, msg.messageId, msg.parentMessageId || null);
+          break;
+
+        case 'regenerate':
+          handleRegenerate(ws, sessionId, session, msg.messageId, msg.userMessageId);
           break;
 
         case 'cancel':
@@ -181,7 +185,7 @@ export function handleConnection(ws, userId, sessionId) {
   });
 }
 
-function handleUserMessage(ws, sessionId, session, content, messageId) {
+function handleUserMessage(ws, sessionId, session, content, messageId, parentMessageId = null) {
   if (!content || typeof content !== 'string') {
     safeSend(ws, { type: 'error', message: '메시지 내용이 비어있습니다', messageId });
     return;
@@ -199,8 +203,13 @@ function handleUserMessage(ws, sessionId, session, content, messageId) {
     safeSend(ws, { type: 'session_renamed', name: autoName });
   }
 
-  // Save user message to DB
-  addMessage(sessionId, 'user', content);
+  // Save user message to DB with parent reference
+  const userMsg = addMessage(sessionId, 'user', content, parentMessageId);
+  // Store the DB message ID for linking assistant response
+  const conn = activeConnections.get(sessionId);
+  if (conn) {
+    conn.userDbMessageId = userMsg.id;
+  }
 
   // Notify client — tag with messageId so client knows which question this answers
   safeSend(ws, { type: 'assistant_start', messageId });
@@ -238,7 +247,6 @@ function handleUserMessage(ws, sessionId, session, content, messageId) {
   }
 
   // Track pending process + messageId for reconnect recovery
-  const conn = activeConnections.get(sessionId);
   if (conn) {
     conn.pendingProc = proc;
     conn.activeMessageId = messageId;
@@ -271,9 +279,17 @@ function handleUserMessage(ws, sessionId, session, content, messageId) {
     const conn = activeConnections.get(sessionId);
     const fullResponse = conn?.fullResponse || '';
 
-    // Save assistant response to DB
+    // Save assistant response to DB, linked to the user message
+    let assistantDbId = null;
     if (fullResponse) {
-      addMessage(sessionId, 'assistant', fullResponse);
+      const parentId = conn?.userDbMessageId || conn?.regenerateParentId || null;
+      const result = addMessage(sessionId, 'assistant', fullResponse, parentId);
+      assistantDbId = result.id;
+
+      // If this was a regenerate, auto-select the new branch
+      if (conn?.regenerateParentId && result.branchIndex > 0) {
+        setBranchSelection(sessionId, conn.regenerateParentId, result.branchIndex);
+      }
     }
 
     // Clear pending proc
@@ -281,13 +297,15 @@ function handleUserMessage(ws, sessionId, session, content, messageId) {
       conn.pendingProc = null;
     }
 
-    // Send completion — tagged with messageId
+    // Send completion — tagged with messageId + DB info for branching
     const currentWs = conn?.ws;
     const sent = safeSend(currentWs, {
       type: 'assistant_end',
       content: fullResponse,
       exitCode: code,
-      messageId
+      messageId,
+      dbMessageId: assistantDbId,
+      userDbMessageId: conn?.userDbMessageId || null,
     });
 
     if (conn && !conn.ws) {
@@ -307,6 +325,8 @@ function handleUserMessage(ws, sessionId, session, content, messageId) {
 
     if (conn) {
       conn.activeMessageId = null;
+      conn.userDbMessageId = null;
+      conn.regenerateParentId = null;
     }
 
     console.log(`[ws] Session ${sessionId}: message ${messageId} completed (${fullResponse.length} chars)`);
@@ -361,5 +381,171 @@ function handleUserMessage(ws, sessionId, session, content, messageId) {
     } catch {
       // Not valid JSON — ignore non-JSON output
     }
+  }
+}
+
+/**
+ * Handle regenerate — re-send the same user message to get an alternative assistant response.
+ * Creates a new assistant branch under the same user message.
+ */
+function handleRegenerate(ws, sessionId, session, messageId, userMessageId) {
+  if (!userMessageId) {
+    safeSend(ws, { type: 'error', message: 'userMessageId가 필요합니다', messageId });
+    return;
+  }
+
+  if (isProcessBusy(sessionId)) {
+    safeSend(ws, { type: 'error', message: '이전 응답이 완료되지 않았습니다', messageId });
+    return;
+  }
+
+  // Look up the user message content from DB
+  const db = getDb();
+  const userMsg = db.prepare('SELECT id, content, role FROM messages WHERE id = ? AND session_id = ?').get(userMessageId, sessionId);
+
+  if (!userMsg || userMsg.role !== 'user') {
+    safeSend(ws, { type: 'error', message: '유효하지 않은 사용자 메시지입니다', messageId });
+    return;
+  }
+
+  // Store regenerate context — assistant response will be saved as a new child of userMessageId
+  const conn = activeConnections.get(sessionId);
+  if (conn) {
+    conn.regenerateParentId = userMsg.id;
+    conn.userDbMessageId = null; // not a new user message
+  }
+
+  safeSend(ws, { type: 'assistant_start', messageId });
+
+  console.log(`[ws] Session ${sessionId}: regenerating response for user message ${userMsg.id} — "${userMsg.content.slice(0, 50)}"`);
+
+  const dbSession = getSession(sessionId);
+  const claudeSessionId = getClaudeSessionId(sessionId) || dbSession?.claude_session_id || null;
+
+  let proc;
+  try {
+    if (session.work_mode === 'ssh') {
+      const profile = getProfileWithCredential(session.ssh_profile_id, session.user_id);
+      if (!profile) {
+        safeSend(ws, { type: 'error', message: 'SSH 프로필을 찾을 수 없습니다', messageId });
+        return;
+      }
+      proc = sendMessageSSH(sessionId, userMsg.content, session.project_path, claudeSessionId, {
+        host: profile.host, port: profile.port, username: profile.username,
+        authMethod: profile.auth_method, credential: profile.credential,
+        remoteOs: profile.remote_os || 'linux'
+      });
+    } else {
+      proc = sendMessage(sessionId, userMsg.content, session.project_path, claudeSessionId);
+    }
+  } catch (err) {
+    safeSend(ws, { type: 'error', message: err.message, messageId });
+    return;
+  }
+
+  if (conn) {
+    conn.pendingProc = proc;
+    conn.activeMessageId = messageId;
+    conn.fullResponse = '';
+    conn.capturedSessionId = false;
+  }
+
+  let lineBuffer = '';
+
+  proc.stdout.on('data', (chunk) => {
+    lineBuffer += chunk.toString();
+    const lines = lineBuffer.split('\n');
+    lineBuffer = lines.pop();
+    for (const line of lines) {
+      processRegenLine(line);
+    }
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    console.error(`[claude stderr] ${chunk.toString().trim()}`);
+  });
+
+  proc.on('close', (code) => {
+    if (lineBuffer.trim()) processRegenLine(lineBuffer);
+
+    const conn = activeConnections.get(sessionId);
+    const fullResponse = conn?.fullResponse || '';
+
+    let assistantDbId = null;
+    if (fullResponse) {
+      const result = addMessage(sessionId, 'assistant', fullResponse, conn?.regenerateParentId || null);
+      assistantDbId = result.id;
+      if (conn?.regenerateParentId && result.branchIndex > 0) {
+        setBranchSelection(sessionId, conn.regenerateParentId, result.branchIndex);
+      }
+    }
+
+    if (conn) conn.pendingProc = null;
+
+    const currentWs = conn?.ws;
+    const sent = safeSend(currentWs, {
+      type: 'assistant_end',
+      content: fullResponse,
+      exitCode: code,
+      messageId,
+      dbMessageId: assistantDbId,
+      userDbMessageId: conn?.regenerateParentId || null,
+      isRegenerate: true,
+    });
+
+    if (conn && !conn.ws && !sent && fullResponse) {
+      conn.unsentEnd = { content: fullResponse, exitCode: code, messageId };
+      setTimeout(() => {
+        const c = activeConnections.get(sessionId);
+        if (c && c.unsentEnd && !c.ws) activeConnections.delete(sessionId);
+      }, 60000);
+    }
+
+    if (conn) {
+      conn.activeMessageId = null;
+      conn.userDbMessageId = null;
+      conn.regenerateParentId = null;
+    }
+
+    console.log(`[ws] Session ${sessionId}: regenerate ${messageId} completed (${fullResponse.length} chars)`);
+  });
+
+  proc.on('error', (err) => {
+    const conn = activeConnections.get(sessionId);
+    if (conn) {
+      conn.pendingProc = null;
+      conn.activeMessageId = null;
+      conn.regenerateParentId = null;
+    }
+    safeSend(conn?.ws, { type: 'error', message: `프로세스 오류: ${err.message}`, messageId });
+  });
+
+  function processRegenLine(line) {
+    if (!line.trim()) return;
+    try {
+      const obj = JSON.parse(line);
+      const conn = activeConnections.get(sessionId);
+
+      if (conn && !conn.capturedSessionId) {
+        const sid = extractSessionId(obj);
+        if (sid) {
+          setClaudeSessionId(sessionId, sid);
+          updateClaudeSessionId(sessionId, sid);
+          conn.capturedSessionId = true;
+        }
+      }
+
+      if (obj.type === 'result' && obj.result && conn && !conn.fullResponse) {
+        conn.fullResponse = obj.result;
+        safeSend(conn?.ws, { type: 'assistant_chunk', content: obj.result, messageId });
+        return;
+      }
+
+      const text = extractText(obj);
+      if (text) {
+        if (conn) conn.fullResponse += text;
+        safeSend(conn?.ws, { type: 'assistant_chunk', content: text, messageId });
+      }
+    } catch {}
   }
 }

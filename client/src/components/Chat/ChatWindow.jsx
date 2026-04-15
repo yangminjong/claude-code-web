@@ -29,7 +29,7 @@ function formatSize(bytes) {
 }
 
 export default function ChatWindow() {
-  const { activeSessionId, messages, addMessage, sessions, resumeSession, deleteSessionPermanently } = useSessionStore();
+  const { activeSessionId, messages, addMessage, sessions, resumeSession, deleteSessionPermanently, reloadMessages, switchBranch } = useSessionStore();
   const token = useAuthStore((s) => s.token);
   const [input, setInput] = useState('');
   const [resuming, setResuming] = useState(false);
@@ -50,25 +50,33 @@ export default function ChatWindow() {
 
   const {
     connected, connState, retryCount, thinking, streamingText,
-    sendMessage, cancelResponse, onComplete, reconnect
+    sendMessage, regenerate, cancelResponse, onComplete, reconnect
   } = useWebSocket(isLive ? activeSessionId : null, token);
 
   // When assistant response completes, add it to message list
   useEffect(() => {
-    onComplete((result) => {
+    onComplete((result, meta = {}) => {
       if (result?.error) {
         toast.error(result.error);
         return;
       }
       if (result) {
-        addMessage({
-          role: 'assistant',
-          content: result,
-          created_at: new Date().toISOString()
-        });
+        if (meta.isRegenerate) {
+          // Regenerate completed — reload the full tree and active path
+          reloadMessages();
+        } else {
+          addMessage({
+            id: meta.dbMessageId,
+            role: 'assistant',
+            content: result,
+            created_at: new Date().toISOString()
+          });
+          // Reload tree in background for worktree panel
+          reloadMessages();
+        }
       }
     });
-  }, [onComplete, addMessage]);
+  }, [onComplete, addMessage, reloadMessages]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -79,6 +87,10 @@ export default function ChatWindow() {
     const text = input.trim();
     if (!text || thinking || streamingText) return;
 
+    // Find the last message's DB ID to use as parent
+    const lastMsg = messages[messages.length - 1];
+    const parentId = lastMsg?.id || null;
+
     // Add user message to local state immediately
     addMessage({
       role: 'user',
@@ -86,12 +98,17 @@ export default function ChatWindow() {
       created_at: new Date().toISOString()
     });
 
-    sendMessage(text);
+    sendMessage(text, parentId);
     setInput('');
 
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+  };
+
+  const handleRegenerate = (userMessageId) => {
+    if (thinking || streamingText) return;
+    regenerate(userMessageId);
   };
 
   const handleKeyDown = (e) => {
@@ -207,7 +224,17 @@ export default function ChatWindow() {
         )}
 
         {messages.map((msg, i) => (
-          <MessageBubble key={msg.id || `msg-${i}`} role={msg.role} content={msg.content} />
+          <MessageBubble
+            key={msg.id || `msg-${i}`}
+            role={msg.role}
+            content={msg.content}
+            messageId={msg.id}
+            siblingCount={msg.siblingCount}
+            siblingIndex={msg.siblingIndex}
+            parentMessageId={msg.parent_message_id}
+            onRegenerate={isLive && msg.role === 'assistant' && !isTyping ? handleRegenerate : null}
+            onSwitchBranch={msg.siblingCount > 1 ? switchBranch : null}
+          />
         ))}
 
         {/* Streaming response */}

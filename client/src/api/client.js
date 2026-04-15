@@ -63,6 +63,12 @@ export const api = {
   deleteSessionPermanently: (id) => request('DELETE', `/sessions/${id}/permanent`),
   getMessages: (id, page = 1, limit = 50) =>
     request('GET', `/sessions/${id}/messages?page=${page}&limit=${limit}`),
+  getMessageTree: (id) => request('GET', `/sessions/${id}/messages/tree`),
+  getActivePath: (id) => request('GET', `/sessions/${id}/messages/active-path`),
+  setBranch: (id, parentMessageId, branchIndex) =>
+    request('PUT', `/sessions/${id}/branches`, { parentMessageId, branchIndex }),
+  getMessageChildren: (sessionId, msgId) =>
+    request('GET', `/sessions/${sessionId}/messages/${msgId}/children`),
 
   // Files
   listFiles: (path = '.') => request('GET', `/files?path=${encodeURIComponent(path)}`),

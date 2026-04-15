@@ -151,19 +151,157 @@ export function resumeSession(sessionId, userId) {
   return db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
 }
 
-export function addMessage(sessionId, role, content) {
+export function addMessage(sessionId, role, content, parentMessageId = null) {
   const db = getDb();
   const last = db.prepare(
     'SELECT MAX(seq_order) as maxSeq FROM messages WHERE session_id = ?'
   ).get(sessionId);
   const seqOrder = (last.maxSeq || 0) + 1;
 
-  db.prepare(
-    'INSERT INTO messages (session_id, role, content, seq_order) VALUES (?, ?, ?, ?)'
-  ).run(sessionId, role, content, seqOrder);
+  // Calculate branch_index among siblings with same parent
+  let branchIndex = 0;
+  if (parentMessageId !== null) {
+    const siblingCount = db.prepare(
+      'SELECT COUNT(*) as count FROM messages WHERE parent_message_id = ?'
+    ).get(parentMessageId).count;
+    branchIndex = siblingCount; // 0-based: first child = 0, second = 1, etc.
+  }
 
-  // Update session last_activity
+  const result = db.prepare(
+    'INSERT INTO messages (session_id, role, content, seq_order, parent_message_id, branch_index) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(sessionId, role, content, seqOrder, parentMessageId, branchIndex);
+
   db.prepare('UPDATE sessions SET last_activity_at = CURRENT_TIMESTAMP WHERE id = ?').run(sessionId);
+
+  return { id: Number(result.lastInsertRowid), branchIndex };
+}
+
+// Get the full message tree for a session
+export function getMessageTree(sessionId) {
+  const db = getDb();
+  return db.prepare(
+    'SELECT id, role, content, parent_message_id, branch_index, created_at FROM messages WHERE session_id = ? ORDER BY seq_order ASC'
+  ).all(sessionId);
+}
+
+// Get active branch selections for a session
+export function getBranchSelections(sessionId) {
+  const db = getDb();
+  return db.prepare(
+    'SELECT parent_message_id, active_branch_index FROM branch_selections WHERE session_id = ?'
+  ).all(sessionId);
+}
+
+// Set active branch at a fork point
+export function setBranchSelection(sessionId, parentMessageId, activeBranchIndex) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO branch_selections (session_id, parent_message_id, active_branch_index)
+    VALUES (?, ?, ?)
+    ON CONFLICT(session_id, parent_message_id) DO UPDATE SET active_branch_index = excluded.active_branch_index
+  `).run(sessionId, parentMessageId, activeBranchIndex);
+}
+
+// Get children of a message
+export function getMessageChildren(messageId) {
+  const db = getDb();
+  return db.prepare(
+    'SELECT id, role, content, branch_index, created_at FROM messages WHERE parent_message_id = ? ORDER BY branch_index ASC'
+  ).all(messageId);
+}
+
+// Get the active path from root to leaf (following branch selections)
+export function getActivePath(sessionId) {
+  const db = getDb();
+
+  const allMessages = db.prepare(
+    'SELECT id, role, content, parent_message_id, branch_index, created_at FROM messages WHERE session_id = ? ORDER BY seq_order ASC'
+  ).all(sessionId);
+
+  const selections = db.prepare(
+    'SELECT parent_message_id, active_branch_index FROM branch_selections WHERE session_id = ?'
+  ).all(sessionId);
+
+  const selectionMap = new Map(selections.map(s => [s.parent_message_id, s.active_branch_index]));
+
+  // Build children lookup: parentId -> [children sorted by branch_index]
+  const childrenMap = new Map();
+  let rootMsg = null;
+
+  for (const msg of allMessages) {
+    if (msg.parent_message_id === null) {
+      if (!rootMsg) rootMsg = msg;
+    } else {
+      if (!childrenMap.has(msg.parent_message_id)) {
+        childrenMap.set(msg.parent_message_id, []);
+      }
+      childrenMap.get(msg.parent_message_id).push(msg);
+    }
+  }
+
+  // Walk from root following active branch at each fork
+  const path = [];
+  let current = rootMsg;
+
+  while (current) {
+    const children = childrenMap.get(current.id) || [];
+    const siblingCount = children.length;
+
+    // Add sibling count info for branch navigation
+    path.push({
+      ...current,
+      siblingCount: 0, // root has no siblings in this context
+      siblingIndex: 0,
+    });
+
+    if (children.length === 0) break;
+
+    const activeBranch = selectionMap.get(current.id) || 0;
+    const safeIndex = Math.min(activeBranch, children.length - 1);
+    current = children[safeIndex];
+
+    // Update the last-pushed item's child fork info is not needed;
+    // Instead annotate the CHILD with its sibling info
+    path[path.length - 1] = {
+      ...path[path.length - 1],
+      childCount: children.length,
+    };
+  }
+
+  // Annotate each message with its sibling info (for ◀ 1/N ▶ navigator)
+  for (const msg of path) {
+    if (msg.parent_message_id !== null) {
+      const siblings = childrenMap.get(msg.parent_message_id) || [];
+      msg.siblingCount = siblings.length;
+      msg.siblingIndex = msg.branch_index;
+    }
+  }
+
+  return path;
+}
+
+// Delete a message and all its descendants
+export function deleteMessageBranch(messageId) {
+  const db = getDb();
+
+  const collectDescendants = (id) => {
+    const children = db.prepare('SELECT id FROM messages WHERE parent_message_id = ?').all(id);
+    let ids = [id];
+    for (const child of children) {
+      ids = ids.concat(collectDescendants(child.id));
+    }
+    return ids;
+  };
+
+  const idsToDelete = collectDescendants(messageId);
+
+  db.transaction(() => {
+    const placeholders = idsToDelete.map(() => '?').join(',');
+    db.prepare(`DELETE FROM branch_selections WHERE parent_message_id IN (${placeholders})`).run(...idsToDelete);
+    db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...idsToDelete);
+  })();
+
+  return idsToDelete.length;
 }
 
 export function deleteSessionPermanently(sessionId, userId) {

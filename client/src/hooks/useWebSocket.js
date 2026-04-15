@@ -194,7 +194,11 @@ export function useWebSocket(sessionId, token) {
               setThinking(false);
               setStreamingText('');
               activeMessageIdRef.current = null;
-              onCompleteRef.current?.(msg.content);
+              onCompleteRef.current?.(msg.content, {
+                dbMessageId: msg.dbMessageId,
+                userDbMessageId: msg.userDbMessageId,
+                isRegenerate: msg.isRegenerate || false,
+              });
             } else {
               console.log('[ws] Ignoring stale assistant_end for', msg.messageId);
             }
@@ -315,17 +319,36 @@ export function useWebSocket(sessionId, token) {
   /**
    * Send a message — queues if not connected.
    * Returns the messageId so caller can track it.
+   * @param {string} content
+   * @param {number|null} parentMessageId - DB message ID of the parent (for tree linking)
    */
-  const sendMessage = useCallback((content) => {
+  const sendMessage = useCallback((content, parentMessageId = null) => {
     const messageId = generateMessageId();
     activeMessageIdRef.current = messageId;
     const msg = { type: 'message', content, messageId };
+    if (parentMessageId != null) msg.parentMessageId = parentMessageId;
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
     } else {
       messageQueueRef.current.push(msg);
       console.log('[ws] Message queued (not connected):', messageId);
+    }
+
+    return messageId;
+  }, []);
+
+  /**
+   * Regenerate — request a new alternative assistant response for a user message.
+   * @param {number} userMessageId - DB id of the user message to regenerate from
+   */
+  const regenerate = useCallback((userMessageId) => {
+    const messageId = generateMessageId();
+    activeMessageIdRef.current = messageId;
+    const msg = { type: 'regenerate', messageId, userMessageId };
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg));
     }
 
     return messageId;
@@ -361,6 +384,7 @@ export function useWebSocket(sessionId, token) {
     thinking,
     streamingText,
     sendMessage,
+    regenerate,
     cancelResponse,
     onComplete,
     reconnect,

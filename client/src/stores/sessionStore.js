@@ -4,8 +4,10 @@ import { api } from '../api/client.js';
 export const useSessionStore = create((set, get) => ({
   sessions: [],
   activeSessionId: null,
-  messages: [],
+  messages: [],         // active path messages (with sibling info)
   messagesTotal: 0,
+  messageTree: [],      // full tree (all messages)
+  branchSelections: [], // active branch selections
   loading: false,
 
   fetchSessions: async () => {
@@ -25,13 +27,51 @@ export const useSessionStore = create((set, get) => ({
   },
 
   setActiveSession: async (id) => {
-    set({ activeSessionId: id, messages: [], messagesTotal: 0 });
+    set({ activeSessionId: id, messages: [], messagesTotal: 0, messageTree: [], branchSelections: [] });
     if (id) {
       try {
-        const { messages, total } = await api.getMessages(id);
-        set({ messages, messagesTotal: total });
-      } catch {}
+        // Load active path (primary view)
+        const { messages } = await api.getActivePath(id);
+        set({ messages, messagesTotal: messages.length });
+
+        // Load full tree for worktree panel
+        const { tree, selections } = await api.getMessageTree(id);
+        set({ messageTree: tree, branchSelections: selections });
+      } catch {
+        // Fallback to legacy flat loading
+        try {
+          const { messages, total } = await api.getMessages(id);
+          set({ messages, messagesTotal: total });
+        } catch {}
+      }
     }
+  },
+
+  // Reload active path and tree after branch changes
+  reloadMessages: async () => {
+    const { activeSessionId } = get();
+    if (!activeSessionId) return;
+    try {
+      const { messages } = await api.getActivePath(activeSessionId);
+      set({ messages, messagesTotal: messages.length });
+
+      const { tree, selections } = await api.getMessageTree(activeSessionId);
+      set({ messageTree: tree, branchSelections: selections });
+    } catch {}
+  },
+
+  // Switch branch at a fork point
+  switchBranch: async (parentMessageId, branchIndex) => {
+    const { activeSessionId } = get();
+    if (!activeSessionId) return;
+    try {
+      const { messages } = await api.setBranch(activeSessionId, parentMessageId, branchIndex);
+      set({ messages, messagesTotal: messages.length });
+
+      // Reload tree to update selections
+      const { tree, selections } = await api.getMessageTree(activeSessionId);
+      set({ messageTree: tree, branchSelections: selections });
+    } catch {}
   },
 
   deleteSession: async (id) => {
@@ -45,10 +85,8 @@ export const useSessionStore = create((set, get) => ({
   },
 
   deleteSessionPermanently: async (id) => {
-    // End session first if active, then permanently delete on server
     try { await api.deleteSession(id); } catch {}
     await api.deleteSessionPermanently(id);
-    // Remove from UI after server confirms deletion
     set((s) => ({
       sessions: s.sessions.filter(sess => sess.id !== id),
       activeSessionId: s.activeSessionId === id ? null : s.activeSessionId,
@@ -77,6 +115,21 @@ export const useSessionStore = create((set, get) => ({
 
   addMessage: (msg) => {
     set((s) => ({ messages: [...s.messages, msg] }));
+  },
+
+  // Replace the last assistant message (for regenerate)
+  replaceLastAssistant: (msg) => {
+    set((s) => {
+      const msgs = [...s.messages];
+      // Find last assistant message and replace
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].role === 'assistant') {
+          msgs[i] = { ...msgs[i], ...msg };
+          return { messages: msgs };
+        }
+      }
+      return { messages: [...msgs, msg] };
+    });
   },
 
   loadMoreMessages: async (page) => {

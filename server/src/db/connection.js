@@ -48,6 +48,60 @@ export function getDb() {
     db.exec('ALTER TABLE sessions ADD COLUMN claude_session_id TEXT');
   }
 
+  // === Conversation branching support ===
+  const msgCols = db.pragma('table_info(messages)').map(c => c.name);
+
+  if (!msgCols.includes('parent_message_id')) {
+    db.exec('ALTER TABLE messages ADD COLUMN parent_message_id INTEGER REFERENCES messages(id)');
+  }
+
+  if (!msgCols.includes('branch_index')) {
+    db.exec('ALTER TABLE messages ADD COLUMN branch_index INTEGER NOT NULL DEFAULT 0');
+  }
+
+  // Migrate existing linear messages to tree structure (one-time)
+  const unmigrated = db.prepare(
+    `SELECT COUNT(*) as count FROM messages
+     WHERE parent_message_id IS NULL AND seq_order > 1`
+  ).get().count;
+
+  if (unmigrated > 0) {
+    const sessions = db.prepare(
+      'SELECT DISTINCT session_id FROM messages'
+    ).all();
+
+    const updateParent = db.prepare(
+      'UPDATE messages SET parent_message_id = ? WHERE id = ?'
+    );
+
+    const migrateTransaction = db.transaction(() => {
+      for (const { session_id } of sessions) {
+        const msgs = db.prepare(
+          'SELECT id, seq_order FROM messages WHERE session_id = ? ORDER BY seq_order ASC'
+        ).all(session_id);
+
+        for (let i = 1; i < msgs.length; i++) {
+          updateParent.run(msgs[i - 1].id, msgs[i].id);
+        }
+      }
+    });
+    migrateTransaction();
+  }
+
+  // Branch selections table — tracks active branch at each fork point
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS branch_selections (
+      session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      parent_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      active_branch_index INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (session_id, parent_message_id)
+    )
+  `);
+
+  // Index for tree queries
+  db.exec('CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_messages_branch ON messages(session_id, parent_message_id, branch_index)');
+
   return db;
 }
 
